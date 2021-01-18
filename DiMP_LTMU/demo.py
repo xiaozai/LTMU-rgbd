@@ -6,4 +6,4 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 p = p_config()
 p.save_results = False
 p.name = 'DiMP_LTMU_demo'
-eval_tracking('demo', p=p)
+eval_tracking('votlt19', p=p)

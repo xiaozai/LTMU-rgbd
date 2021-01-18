@@ -5,7 +5,7 @@ lasot_dir = '/home/dkn/daikenan/dataset/LASOT/LaSOTBenchmark/'
 # OTB
 otb_dir = '/home/dkn/daikenan/dataset/OTB'
 # VOTLT2019
-votlt19_dir = '/home/dkn/data/lt2019'
+votlt19_dir = '/home/yans/Datasets/votlt2019'
 # VOTLT2018
 votlt18_dir = '/home/daikenan/dataset/VOT18_long'
 # TLP
