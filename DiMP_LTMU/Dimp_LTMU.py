@@ -57,7 +57,7 @@ import random
 
 
 class Dimp_LTMU_Tracker(object):
-    def __init__(self, image, region, p=None, groundtruth=None):
+    def __init__(self, image, region, p=None, groundtruth=None, tracker_name='dimp', tracker_params='dimp50'):
         self.p = p
         self.i = 0
         self.t_id = 0
@@ -72,7 +72,7 @@ class Dimp_LTMU_Tracker(object):
 
         self.last_gt = init_gt
         self.init_pymdnet(image, init_gt1)
-        self.local_init(image, init_gt1)
+        self.local_init(image, init_gt1, tracker_name=tracker_name, tracker_params=tracker_params)
         self.Golbal_Track_init(image, init_gt1)
         if self.p.use_mask:
             self.siammask_init(image, init_gt1)
@@ -355,8 +355,12 @@ class Dimp_LTMU_Tracker(object):
             checkpoint = './meta_updater/' + self.p.model_dir + '/lstm_model.ckpt-' + str(self.p.checkpoint)
         saver.restore(self.sess, checkpoint)
 
-    def local_init(self, image, init_bbox):
-        local_tracker = Tracker('dimp', 'dimp50')
+    def local_init(self, image, init_bbox, track_name='dimp', tracker_params='dimp50'):
+        '''
+        Song : here should replace with our depth-only Tracker
+        '''
+        local_tracker = Tracker(track_name, tracker_params)
+        # local_tracker = Tracker('dimp', 'dimp50')
         params = local_tracker.get_parameters()
 
         debug_ = getattr(params, 'debug', 0)

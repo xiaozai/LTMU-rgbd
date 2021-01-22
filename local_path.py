@@ -12,6 +12,4 @@ votlt18_dir = '/home/daikenan/dataset/VOT18_long'
 tlp_dir = '/home/yans/Datasets/TLP'
 base_path = '/media/dkn/Data2/LTMU'
 
-cdtb_depth_dir = ''
-cdtb_color_dir = ''
-cdtb_rgbd_dir = ['', '']
+cdtb_dir = ''

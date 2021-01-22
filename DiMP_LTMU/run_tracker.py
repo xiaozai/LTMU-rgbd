@@ -9,7 +9,7 @@ if main_path not in sys.path:
     sys.path.append(main_path)
     sys.path.append(os.path.join(main_path, 'utils'))
 from DiMP_LTMU.Dimp_LTMU import Dimp_LTMU_Tracker
-from local_path import lasot_dir, tlp_dir, otb_dir, votlt19_dir, votlt18_dir
+from local_path import lasot_dir, tlp_dir, otb_dir, votlt19_dir, votlt18_dir, cdtb_depth_dir, cdtb_color_dir, cdtb_rgbd_dir
 from tracking_utils import Region
 
 
@@ -58,6 +58,8 @@ def get_seq_list(Dataset, mode=None, classes=None, video=None):
         data_dir = os.path.join(lasot_dir, classes)
     elif Dataset == 'demo':
         data_dir = '../demo_sequences'
+    elif Dataset in ['cdtb_depth', 'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
+        data_dir = cdtb_dir
 
     sequence_list = os.listdir(data_dir)
     sequence_list.sort()
@@ -91,6 +93,20 @@ def get_groundtruth(Dataset, data_dir, video):
     elif Dataset == "tlp":
         sequence_dir = data_dir + '/' + video + '/img/'
         gt_dir = data_dir + '/' + video + '/groundtruth_rect.txt'
+    elif Dataset in ['cdtb_depth', 'cdtb_colormap']:
+        sequence_dir = data_dir + '/' + video + '/depth/'
+        gt_dir = data_dir + '/' + video + '/groundtruth.txt'
+    elif Dataset == 'cdtb_color':
+        sequence_dir = data_dir + '/' + video + '/color/'
+        gt_dir = data_dir + '/' + video + '/groundtruth.txt'
+    elif Dataset == 'cdtb_rgbd':
+        color_sequence_dir = data_dir + '/' + video + '/color/'
+        depth_sequence_dir = data_dir + '/' + video + '/depth/'
+        sequence_dir = {}
+        sequence_dir['color'] = color_sequence_dir
+        sequence_dir['depth'] = depth_sequence_dir
+        gt_dir = data_dir + '/' + video + '/groundtruth.txt'
+
     try:
         groundtruth = np.loadtxt(gt_dir, delimiter=',')
     except:
@@ -100,8 +116,27 @@ def get_groundtruth(Dataset, data_dir, video):
 
     return sequence_dir, groundtruth
 
+def read_depth(file_name, normalize=True):
 
-def run_seq_list(Dataset, p, sequence_list, data_dir):
+    return depth
+
+def read_colormap(file_name):
+
+    return colormap
+
+def read_rgbd(file_name):
+
+    return rgbd
+
+def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50', dtype='rgb'):
+    '''
+    Song :
+        - dtype : the data type for inputs, e.g. rgb, colormap, depth, rgbd
+            - rgb      : H x W x 3
+            - depth    : 1) normalzie to [0, 255], 2) concatenate the channels , [depth, depth, depth]
+            - colormap : 1) normalzie depth images, 2) convert to colormap, JET
+            - rgbd     : H x W x (3+1), rgb+depth, [..., :3] = rgb, [..., 3:] = depth
+    '''
 
     m_shape = 19
     base_save_path = os.path.join('./results', p.name, Dataset)
@@ -123,19 +158,40 @@ def run_seq_list(Dataset, p, sequence_list, data_dir):
             if os.path.exists(result_save_path):
                 continue
 
-        image_list = os.listdir(sequence_dir)
-        image_list.sort()
-        image_list = [im for im in image_list if im.endswith("jpg") or im.endswith("jpeg")]
+        if dtype != 'rgbd':
+            '''
+            for rgb, colormap, depth
+            '''
+            image_list = os.listdir(sequence_dir)
+            image_list.sort()
+            image_list = [im for im in image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
 
-        region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
-        image_dir = sequence_dir + image_list[0]
-        image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
+            image_dir = sequence_dir + image_list[0]
+        else:
+            '''
+            for rgb + depth
+            '''
+            color_image_list = os.listdir(sequence_dir['color'])
+            color_image_list.sort()
+            image_list = [im[:-4] for im in color_image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
+
+            color_image_dir = sequence_dir['color'] + image_list[0] + '.jpg'
+        if dtype == 'rgb':
+            image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
+        elif dtype == 'depth':
+            image = read_depth(image_dir, normalize=True)
+        elif dtype == 'colormap':
+            image = read_colormap(image_dir)
+        else:
+            print('unknown input type : %s'%dtype)
+
         h = image.shape[0]
         w = image.shape[1]
+        region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
         region1 = groundtruth[0]
         box = np.array([region1[0] / w, region1[1] / h, (region1[0] + region1[2]) / w, (region1[1] + region1[3]) / h])
         tic = time.time()
-        tracker = Dimp_LTMU_Tracker(image, region, p=p, groundtruth=groundtruth)
+        tracker = Dimp_LTMU_Tracker(image, region, p=p, groundtruth=groundtruth, tracker_name=tracker_name, tracker_params=tracker_params)
         score_map, score_max = tracker.get_first_state()
         t = time.time() - tic
         if p.save_results and Dataset in ['votlt18', 'votlt19']:
@@ -151,7 +207,15 @@ def run_seq_list(Dataset, p, sequence_list, data_dir):
         for im_id in range(1, len(image_list)):
             tic = time.time()
             imagefile = sequence_dir + image_list[im_id]
-            image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
+            if dtype == 'rgb':
+                image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
+            elif dtype == 'depth':
+                image = read_depth(image_dir, normalize=True)
+            elif dtype == 'colormap':
+                image = read_colormap(image_dir)
+            else:
+                print('unknown input type : %s'%dtype)
+            # image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
             print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list))
             region, score_map, iou, score_max, dis = tracker.tracking(image)
             t = time.time() - tic
@@ -175,16 +239,15 @@ def run_seq_list(Dataset, p, sequence_list, data_dir):
         tf.reset_default_graph()
 
 
-def eval_tracking(Dataset, p, mode=None, video=None):
+def eval_tracking(Dataset, p, mode=None, video=None, tracker_name='dimp', tracker_params='dimp50'):
     if Dataset == 'lasot':
         classes = os.listdir(lasot_dir)
         classes.sort()
         for c in classes:
             sequence_list, data_dir = get_seq_list(Dataset, mode=mode, classes=c)
-            run_seq_list(Dataset, p, sequence_list, data_dir)
-    elif Dataset in ['votlt18', 'votlt19', 'tlp', 'otb', 'demo']:
+            run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
+    elif Dataset in ['votlt18', 'votlt19', 'tlp', 'otb', 'demo', 'cdtb_depth', 'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
         sequence_list, data_dir = get_seq_list(Dataset, video=video)
-        run_seq_list(Dataset, p, sequence_list, data_dir)
+        run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
     else:
         print('Warning: Unknown dataset.')
-
