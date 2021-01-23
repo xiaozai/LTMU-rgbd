@@ -117,16 +117,52 @@ def get_groundtruth(Dataset, data_dir, video):
     return sequence_dir, groundtruth
 
 def read_depth(file_name, normalize=True):
-
-    return depth
+    depth = cv2.imread(file_name, -1)
+    if normalize:
+        depth = cv2.normalize(depth, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    depth = cv2.merge((depth, depth, depth)) # H * W * 3
+    return np.asarray(depth, dtype=np.uint8)
 
 def read_colormap(file_name):
-
+    depth = cv2.imread(file_name, -1)
+    depth = cv2.normalize(depth, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    depth = np.asarcray(depth, dtype=np.uint8)
+    colormap = cv2.applyColorMap(depth, cv2.COLORMAP_JET)
     return colormap
 
-def read_rgbd(file_name):
+def read_rgbd(file_name, normalize=True):
+    '''
+    cv2.imread() return uint8 -> float
+    depth is float32
+    '''
+    color_filename = file_name['color']
+    depth_filename = file_name['depth']
 
-    return rgbd
+    depth = cv2.imread(depth_filename, -1)
+    if normalize:
+        depth = cv2.normalize(dpeth, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    depth = np.float32(depth)
+
+    color = np.asarray(cv2.imread(color_filename), dtype=np.float32)            # H * W * 3
+    b, g, r = color[..., 0], color[..., 1], color[..., 2]
+    rgbd = cv2.merge((r, g, b, depth))
+    return rgbd # np.asarray(rgbd, dtype=np.float32) # Song : remember to check the value in depth change or not , from uint8 to 32f ???
+
+def get_image(file_name, dtype='rgb', normalize=True):
+
+    if dtype == 'rgb':
+        image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
+    elif dtype == 'depth':
+        image = read_depth(image_dir, normalize=normalize) # H * W * 3, [dp, dp, dp]
+    elif dtype == 'colormap':
+        image = read_colormap(image_dir) # H * W * 3
+    elif dtype == 'rgbd':
+        image = read_rgbd(image_dir, normalize=normalize) # H * W * 4
+    else:
+        print('unknown input type : %s'%dtype)
+        image = None
+
+    return image
 
 def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50', dtype='rgb'):
     '''
@@ -158,33 +194,20 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             if os.path.exists(result_save_path):
                 continue
 
-        if dtype != 'rgbd':
-            '''
-            for rgb, colormap, depth
-            '''
-            image_list = os.listdir(sequence_dir)
-            image_list.sort()
-            image_list = [im for im in image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
-
-            image_dir = sequence_dir + image_list[0]
-        else:
-            '''
-            for rgb + depth
-            '''
+        if dtype == 'rgbd':
             color_image_list = os.listdir(sequence_dir['color'])
             color_image_list.sort()
             image_list = [im[:-4] for im in color_image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
-
-            color_image_dir = sequence_dir['color'] + image_list[0] + '.jpg'
-        if dtype == 'rgb':
-            image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
-        elif dtype == 'depth':
-            image = read_depth(image_dir, normalize=True)
-        elif dtype == 'colormap':
-            image = read_colormap(image_dir)
+            image_dir = {}
+            image_dir['color'] = sequence_dir['color'] + image_list[0] + '.jpg'
+            image_dir['depth'] = sequence_dir['depth'] + image_list[0] + '.png'
         else:
-            print('unknown input type : %s'%dtype)
+            image_list = os.listdir(sequence_dir)
+            image_list.sort()
+            image_list = [im for im in image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
+            image_dir = sequence_dir + image_list[0]
 
+        image = get_image(image_dir, dtype=dtype)
         h = image.shape[0]
         w = image.shape[1]
         region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
@@ -206,15 +229,15 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
 
         for im_id in range(1, len(image_list)):
             tic = time.time()
-            imagefile = sequence_dir + image_list[im_id]
-            if dtype == 'rgb':
-                image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
-            elif dtype == 'depth':
-                image = read_depth(image_dir, normalize=True)
-            elif dtype == 'colormap':
-                image = read_colormap(image_dir)
+
+            if dtype == 'rgbd':
+                image_dir = {}
+                image_dir['color'] = sequence_dir['color'] + image_list[im_id] + '.jpg'
+                image_dir['depth'] = sequence_dir['depth'] + image_list[im_id] + '.png'
             else:
-                print('unknown input type : %s'%dtype)
+                imagefile = sequence_dir + image_list[im_id]
+
+            image = get_image(image_dir, dtype=dtype)
             # image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
             print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list))
             region, score_map, iou, score_max, dis = tracker.tracking(image)
