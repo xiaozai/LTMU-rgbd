@@ -128,7 +128,7 @@ def read_colormap(file_name, depth_threshold=None):
     if depth_threshold is not None:
         try:
             max_depth = np.max(depth)
-            print('max_depth : ', max_depth)
+            # print('max_depth : ', max_depth)
             if max_depth > depth_threshold:
                 depth[depth > depth_threshold] = depth_threshold
         except:
@@ -225,7 +225,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         tracker = Dimp_LTMU_Tracker(image, region, p=p, groundtruth=groundtruth, tracker_name=tracker_name, tracker_params=tracker_params)
         score_map, score_max = tracker.get_first_state()
         t = time.time() - tic
-        if p.save_results and Dataset in ['votlt18', 'votlt19']:
+        if p.save_results and Dataset in ['votlt18', 'votlt19', 'cdtb_colormap', 'cdtb_color', 'cdtb_depth', 'cdtb_rgbd']:
             results_saver = VOTLT_Results_Saver(base_save_path, video, t)
         num_frames = len(image_list)
         all_map = np.zeros((num_frames, m_shape, m_shape))
@@ -252,7 +252,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             region, score_map, iou, score_max, dis = tracker.tracking(image)
             print('score: ', score_max)
             t = time.time() - tic
-            if p.save_results and Dataset in ['votlt18', 'votlt19']:
+            if p.save_results and Dataset in ['votlt18', 'votlt19', 'cdtb_colormap', 'cdtb_color', 'cdtb_depth', 'cdtb_rgbd']:
                 results_saver.record(conf=score_max, region=region, t=t)
             all_map[im_id] = cv2.resize(score_map, (m_shape, m_shape))
 

@@ -15,12 +15,12 @@ parser.add_argument('--video', type=str, default=None,
                     help='the name of video, if only run one sequence')
 parser.add_argument('--gpu_id', type=str, default='0',
                     help='0 or 1, or others')
-parser.add_argument('--visualization', type=bool, default=True,
-                    help='True or False')
-parser.add_argument('--use_mask', type=bool, default=False,
-                    help='True or False')
-parser.add_argument('--save_results', type=bool, default=False,
-                    help='True or False')
+parser.add_argument('--visualization', type=int, default=1,
+                    help='0 or 1, True or False')
+parser.add_argument('--use_mask', type=int, default=0,
+                    help='0 or 1, True or False')
+parser.add_argument('--save_results', type=int, default=0,
+                    help='0 or 1, True or False')
 
 args = parser.parse_args()
 

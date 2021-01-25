@@ -1,15 +1,17 @@
 # Dataset
-
+root_path = '/home/yan/Data2/'
 # LaSOT
-lasot_dir = '/home/yans/Datasets/LaSOTBenchmark/'
+lasot_dir = root_path + 'Datasets/LaSOTBenchmark/'
 # OTB
-otb_dir = '/home/yans/Datasets/OTB'
+otb_dir = root_path + 'Datasets/OTB'
 # VOTLT2019
-votlt19_dir = '/home/yans/Datasets/votlt2019'
+votlt19_dir = root_path + 'Datasets/votlt2019'
 # VOTLT2018
-votlt18_dir = '/home/daikenan/dataset/VOT18_long'
+votlt18_dir = root_path + 'dataset/VOT18_long'
 # TLP
-tlp_dir = '/home/yans/Datasets/TLP'
-base_path = '/media/dkn/Data2/LTMU'
+tlp_dir = root_path + 'Datasets/TLP'
 
-cdtb_dir = '/home/yans/Datasets/CDTB/'
+cdtb_dir = root_path + 'Datasets/CDTB/sequences/'
+
+
+base_path = '/home/yan/Data2/LTMU-rgbd/'
