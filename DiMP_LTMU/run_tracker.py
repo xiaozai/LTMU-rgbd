@@ -9,7 +9,7 @@ if main_path not in sys.path:
     sys.path.append(main_path)
     sys.path.append(os.path.join(main_path, 'utils'))
 from DiMP_LTMU.Dimp_LTMU import Dimp_LTMU_Tracker
-from local_path import lasot_dir, tlp_dir, otb_dir, votlt19_dir, votlt18_dir, cdtb_depth_dir, cdtb_color_dir, cdtb_rgbd_dir
+from local_path import lasot_dir, tlp_dir, otb_dir, votlt19_dir, votlt18_dir, cdtb_dir
 from tracking_utils import Region
 
 
@@ -121,12 +121,20 @@ def read_depth(file_name, normalize=True):
     if normalize:
         depth = cv2.normalize(depth, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     depth = cv2.merge((depth, depth, depth)) # H * W * 3
-    return np.asarray(depth, dtype=np.uint8)
+    return depth # np.asarray(depth, dtype=np.uint8)
 
-def read_colormap(file_name):
+def read_colormap(file_name, depth_threshold=None):
     depth = cv2.imread(file_name, -1)
-    depth = cv2.normalize(depth, None, alpha=0, beta=1, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-    depth = np.asarcray(depth, dtype=np.uint8)
+    if depth_threshold is not None:
+        try:
+            max_depth = np.max(depth)
+            print('max_depth : ', max_depth)
+            if max_depth > depth_threshold:
+                depth[depth > depth_threshold] = depth_threshold
+        except:
+            depth = depth
+    depth = cv2.normalize(depth, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    depth = np.asarray(depth, dtype=np.uint8)
     colormap = cv2.applyColorMap(depth, cv2.COLORMAP_JET)
     return colormap
 
@@ -148,14 +156,14 @@ def read_rgbd(file_name, normalize=True):
     rgbd = cv2.merge((r, g, b, depth))
     return rgbd # np.asarray(rgbd, dtype=np.float32) # Song : remember to check the value in depth change or not , from uint8 to 32f ???
 
-def get_image(file_name, dtype='rgb', normalize=True):
+def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None):
 
     if dtype == 'rgb':
         image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
     elif dtype == 'depth':
         image = read_depth(image_dir, normalize=normalize) # H * W * 3, [dp, dp, dp]
     elif dtype == 'colormap':
-        image = read_colormap(image_dir) # H * W * 3
+        image = read_colormap(image_dir, depth_threshold=depth_threshold) # H * W * 3
     elif dtype == 'rgbd':
         image = read_rgbd(image_dir, normalize=normalize) # H * W * 4
     else:
@@ -164,7 +172,7 @@ def get_image(file_name, dtype='rgb', normalize=True):
 
     return image
 
-def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50', dtype='rgb'):
+def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50', dtype='rgb', depth_threshold=None):
     '''
     Song :
         - dtype : the data type for inputs, e.g. rgb, colormap, depth, rgbd
@@ -207,7 +215,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             image_list = [im for im in image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
             image_dir = sequence_dir + image_list[0]
 
-        image = get_image(image_dir, dtype=dtype)
+        image = get_image(image_dir, dtype=dtype, depth_threshold=depth_threshold)
         h = image.shape[0]
         w = image.shape[1]
         region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
@@ -235,12 +243,14 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                 image_dir['color'] = sequence_dir['color'] + image_list[im_id] + '.jpg'
                 image_dir['depth'] = sequence_dir['depth'] + image_list[im_id] + '.png'
             else:
-                imagefile = sequence_dir + image_list[im_id]
+                image_dir = sequence_dir + image_list[im_id]
+                # print(im_id, image_dir)
 
-            image = get_image(image_dir, dtype=dtype)
+            image = get_image(image_dir, dtype=dtype, depth_threshold=depth_threshold)
             # image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
             print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list))
             region, score_map, iou, score_max, dis = tracker.tracking(image)
+            print('score: ', score_max)
             t = time.time() - tic
             if p.save_results and Dataset in ['votlt18', 'votlt19']:
                 results_saver.record(conf=score_max, region=region, t=t)
@@ -263,14 +273,19 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
 
 
 def eval_tracking(Dataset, p, mode=None, video=None, tracker_name='dimp', tracker_params='dimp50'):
+
+    dtype = Dataset[5:] if Dataset in ['cdtb_depth', 'cdtb_colormap','cdtb_rgbd'] else 'rgb'
+    depth_threshold = 10000 if Dataset in ['cdtb_depth', 'cdtb_colormap', 'cdtb_rgbd'] else None
+    # depth_threshold = None
+
     if Dataset == 'lasot':
         classes = os.listdir(lasot_dir)
         classes.sort()
         for c in classes:
             sequence_list, data_dir = get_seq_list(Dataset, mode=mode, classes=c)
-            run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
+            run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params, dtype=dtype, depth_threshold=depth_threshold)
     elif Dataset in ['votlt18', 'votlt19', 'tlp', 'otb', 'demo', 'cdtb_depth', 'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
         sequence_list, data_dir = get_seq_list(Dataset, video=video)
-        run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
+        run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params, dtype=dtype, depth_threshold=depth_threshold)
     else:
         print('Warning: Unknown dataset.')

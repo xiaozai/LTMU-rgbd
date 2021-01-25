@@ -355,11 +355,11 @@ class Dimp_LTMU_Tracker(object):
             checkpoint = './meta_updater/' + self.p.model_dir + '/lstm_model.ckpt-' + str(self.p.checkpoint)
         saver.restore(self.sess, checkpoint)
 
-    def local_init(self, image, init_bbox, track_name='dimp', tracker_params='dimp50'):
+    def local_init(self, image, init_bbox, tracker_name='dimp', tracker_params='dimp50'):
         '''
         Song : here should replace with our depth-only Tracker
         '''
-        local_tracker = Tracker(track_name, tracker_params)
+        local_tracker = Tracker(tracker_name, tracker_params)
         # local_tracker = Tracker('dimp', 'dimp50')
         params = local_tracker.get_parameters()
 
