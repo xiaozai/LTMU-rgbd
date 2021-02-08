@@ -35,7 +35,7 @@ class VOTLT_Results_Saver(object):
         self.g_region.writelines('1\n')
         self.g_conf = open(os.path.join(result_path, video, video + '_001_confidence.value'), 'w')
         self.g_conf.writelines('\n')
-        self.g_time = open(os.path.join(result_path, video, video + '_time.txt'), 'w')
+        self.g_time = open(os.path.join(result_path, video, video + '_001_time.value'), 'w')
         self.g_time.writelines([str(t)+'\n'])
 
     def record(self, conf, region, t):
@@ -61,6 +61,7 @@ def get_seq_list(Dataset, mode=None, classes=None, video=None):
     elif Dataset in ['cdtb_depth', 'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
         data_dir = cdtb_dir
 
+    print(Dataset)
     sequence_list = os.listdir(data_dir)
     sequence_list.sort()
     sequence_list = [title for title in sequence_list if not title.endswith("txt")]
@@ -116,9 +117,16 @@ def get_groundtruth(Dataset, data_dir, video):
 
     return sequence_dir, groundtruth
 
-def read_depth(file_name, normalize=True):
+def read_depth(file_name, depth_threshold=None, normalize=True):
     depth = cv2.imread(file_name, -1)
     if normalize:
+        if depth_threshold is not None:
+            try:
+                max_depth = np.max(depth)
+                if max_depth > depth_threshold:
+                    depth[depth > depth_threshold] = depth_threshold
+            except:
+                depth = depth
         depth = cv2.normalize(depth, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     depth = cv2.merge((depth, depth, depth)) # H * W * 3
     return depth # np.asarray(depth, dtype=np.uint8)
@@ -166,6 +174,12 @@ def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None):
         image = read_colormap(image_dir, depth_threshold=depth_threshold) # H * W * 3
     elif dtype == 'rgbd':
         image = read_rgbd(image_dir, normalize=normalize) # H * W * 4
+    elif dtype == 'layered_colormap':
+        ''' return H x W x (3*C) , three layers '''
+        image = read_layeredColormap(image_dir, depth_threshold=depth_threshold)
+    elif dtype == 'layered_depth':
+        '''return H x W x (3*C), three layers '''
+        image = read_layeredDepth(image_dir, depth_threshold=depth_threshold)
     else:
         print('unknown input type : %s'%dtype)
         image = None
@@ -180,6 +194,9 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             - depth    : 1) normalzie to [0, 255], 2) concatenate the channels , [depth, depth, depth]
             - colormap : 1) normalzie depth images, 2) convert to colormap, JET
             - rgbd     : H x W x (3+1), rgb+depth, [..., :3] = rgb, [..., 3:] = depth
+
+            - layeredColormap :
+            - layeredDepth : 
     '''
 
     m_shape = 19
@@ -272,9 +289,12 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         tf.reset_default_graph()
 
 
-def eval_tracking(Dataset, p, mode=None, video=None, tracker_name='dimp', tracker_params='dimp50'):
+def eval_tracking(Dataset, p, mode=None, video=None, tracker_name='dimp', tracker_params='dimp50', dtype=None):
 
-    dtype = Dataset[5:] if Dataset in ['cdtb_depth', 'cdtb_colormap','cdtb_rgbd'] else 'rgb'
+    if not dtype:
+        # dtype in [depth, colormap, rgbd, rgb, layered_depth, layered_colormap]
+        dtype = Dataset[5:] if Dataset in ['cdtb_depth', 'cdtb_colormap','cdtb_rgbd'] else 'rgb'
+
     depth_threshold = 10000 if Dataset in ['cdtb_depth', 'cdtb_colormap', 'cdtb_rgbd'] else None
     # depth_threshold = None
 

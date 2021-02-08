@@ -11,7 +11,7 @@ votlt18_dir = root_path + 'dataset/VOT18_long'
 # TLP
 tlp_dir = root_path + 'Datasets/TLP'
 
-cdtb_dir = root_path + 'Datasets/CDTB/sequences/'
+cdtb_dir = root_path + 'vot-workspace/sequences/'
 
 
 base_path = '/home/yan/Data2/LTMU-rgbd/'

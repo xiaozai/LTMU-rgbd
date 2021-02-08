@@ -58,19 +58,23 @@ from tools.test import *
 
 class p_config(object):
     Verification = "rtmdnet"
-    name = 'Dimp_MU'
+    # name = 'Dimp_MU'
+    name = 'Dimp_LTMU'
     model_dir = 'dimp_mu_votlt'
+    # model_dir = 'dimp_mu_votrgbd'
     checkpoint = 220000
     start_frame = 200
     R_candidates = 20
-    save_results = False
-    use_mask = True
+    # save_results = False
+    save_results = True
+    # use_mask = True
+    use_mask = False
     save_training_data = False
     visualization = True
 
 
 class Dimp_LTMU_Tracker(object):
-    def __init__(self, image, region, p=None, groundtruth=None):
+    def __init__(self, image, region, p=None, groundtruth=None, tracker_name='dimp', tracker_params='dimp50'):
         self.p = p
         self.i = 0
         self.t_id = 0
@@ -85,7 +89,7 @@ class Dimp_LTMU_Tracker(object):
 
         self.last_gt = init_gt
         self.init_pymdnet(image, init_gt1)
-        self.local_init(image, init_gt1)
+        self.local_init(image, init_gt1, tracker_name=tracker_name, tracker_params=tracker_params)
         self.Golbal_Track_init(image, init_gt1)
         if self.p.use_mask:
             self.siammask_init(image, init_gt1)
@@ -365,9 +369,9 @@ class Dimp_LTMU_Tracker(object):
             checkpoint = os.path.join(base_path, 'DiMP_LTMU/meta_updater/' + self.p.model_dir + '/lstm_model.ckpt-' + str(self.p.checkpoint))
         saver.restore(self.sess, checkpoint)
 
-    def local_init(self, image, init_bbox):
-        local_tracker = Tracker('dimp', 'dimp50')
-        # local_tracker = Tracker('dimp', 'dimp50_colormap')
+    def local_init(self, image, init_bbox, tracker_name='dimp', tracker_params='dimp50'):
+        # local_tracker = Tracker('dimp', 'dimp50')
+        local_tracker = Tracker(tracker_name, tracker_params)
         params = local_tracker.get_parameters()
 
         debug_ = getattr(params, 'debug', 0)
@@ -538,22 +542,43 @@ class Dimp_LTMU_Tracker(object):
         return vot.Rectangle(float(self.last_gt[1]), float(self.last_gt[0]), float(width),
                 float(height)), confidence_score
 
+def read_colormap(depthfile, depth_threshold=8000):
+    depth = cv2.imread(depthfile, -1)
+    if depth_threshold is not None:
+        try:
+            max_depth = np.max(depth)
+            # print('max_depth : ', max_depth)
+            if max_depth > depth_threshold:
+                depth[depth > depth_threshold] = depth_threshold
+        except:
+            depth = depth
+    depth = cv2.normalize(depth, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+    depth = np.asarray(depth, dtype=np.uint8)
+    colormap = cv2.applyColorMap(depth, cv2.COLORMAP_JET)
+    return colormap
 
-handle = vot.VOT("rectangle")
+handle = vot.VOT("rectangle", 'rgbd')
 
 selection = handle.region()
-imagefile = handle.frame()
+imagefile, depthfile = handle.frame()
 p = p_config()
+p.name = 'Dimp_MU'
+p.save_results = True
+p.use_mask = False
+p.save_training_data = False
+p.visualization = True
 # if not imagefile:
 #     sys.exit(0)
-image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
-tracker = Dimp_LTMU_Tracker(image, selection, p=p)
+# image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
+image = read_colormap(depthfile)
+tracker = Dimp_LTMU_Tracker(image, selection, p=p, tracker_name='dimp', tracker_params='dimp18_colormap')
 
 while True:
-    imagefile = handle.frame()
+    imagefile, depthfile = handle.frame()
     #print(imagefile)
-    if not imagefile:
+    if not depthfile:
         break
-    image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
+    # image = cv2.cvtColor(cv2.imread(imagefile), cv2.COLOR_BGR2RGB)
+    image = read_colormap(depthfile)
     region, confidence = tracker.tracking(image)
     handle.report(region, confidence)
