@@ -146,6 +146,54 @@ def read_colormap(file_name, depth_threshold=None):
     colormap = cv2.applyColorMap(depth, cv2.COLORMAP_JET)
     return colormap
 
+def read_layeredColormap(file_name, target_box=None, depth_threshold=None, N=3):
+    depth = cv2.imread(file_name, -1)
+    if depth_threshold is not None:
+        try:
+            max_depth = np.max(depth)
+            # print('max_depth : ', max_depth)
+            if max_depth > depth_threshold:
+                depth[depth > depth_threshold] = depth_threshold
+        except:
+            depth = depth
+
+    '''
+     To split the depth values :
+        - 1) fixed  bins, e.g. 0-1000, 1000-2000, 2000-3000, 3000-4000, ....
+        - 2) k-clustered based bins, e.g. by performing the K-clusters, to get the depth seeds, each seed is the center of layers
+                                     e.g. K-Cluster(depth) -> dp = 30, 1000, 4500, 8000 -> Layer_30, Layer_1000, .... Layer_dp
+
+    We use the 1) now !!!!!!, one problem, K and Step affect the performance, especially for indoor scene, needs the optimal K and Step
+    '''
+    H, W = depth.shape
+    K = 10
+    Step = 1000 # 1 meter
+    depth_layers = np.zeros((H, W, K*3), dtype=np.float32)
+    for ii in range(K):
+        temp = depth.copy()
+
+        '''
+            1) to decide the boarders, low and high
+            2) to mask the depth layers
+            3) to normalize the layers by using the low and high
+            4) to decide if the current layer needs to be returned
+        '''
+        low = ii * Step
+        if ii == K-1:
+            high = np.max(depth)
+        else:
+            high = (ii+1) * Step
+        temp[temp < low] = low - 10    # if the target is on the boarder ?????
+        temp[temp > high] = high + 10  # acturaly no effect
+
+        temp = cv2.normalize(temp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        temp = np.asarray(temp, dtype=np.uint8)
+        temp = cv2.applyColorMap(temp, cv2.COLORMAP_JET)
+
+        depth_layers[..., ii*3:(ii+1)*3] = temp
+
+    return depth_layers
+
 def read_rgbd(file_name, normalize=True):
     '''
     cv2.imread() return uint8 -> float
@@ -164,7 +212,7 @@ def read_rgbd(file_name, normalize=True):
     rgbd = cv2.merge((r, g, b, depth))
     return rgbd # np.asarray(rgbd, dtype=np.float32) # Song : remember to check the value in depth change or not , from uint8 to 32f ???
 
-def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None):
+def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None, target_box=None):
 
     if dtype == 'rgb':
         image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
@@ -176,7 +224,7 @@ def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None):
         image = read_rgbd(image_dir, normalize=normalize) # H * W * 4
     elif dtype == 'layered_colormap':
         ''' return H x W x (3*C) , three layers '''
-        image = read_layeredColormap(image_dir, depth_threshold=depth_threshold)
+        image = read_layeredColormap(image_dir, target_box=target_box, depth_threshold=depth_threshold)
     elif dtype == 'layered_depth':
         '''return H x W x (3*C), three layers '''
         image = read_layeredDepth(image_dir, depth_threshold=depth_threshold)
@@ -196,7 +244,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             - rgbd     : H x W x (3+1), rgb+depth, [..., :3] = rgb, [..., 3:] = depth
 
             - layeredColormap :
-            - layeredDepth : 
+            - layeredDepth :
     '''
 
     m_shape = 19
@@ -235,9 +283,11 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         image = get_image(image_dir, dtype=dtype, depth_threshold=depth_threshold)
         h = image.shape[0]
         w = image.shape[1]
+
         region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
         region1 = groundtruth[0]
-        box = np.array([region1[0] / w, region1[1] / h, (region1[0] + region1[2]) / w, (region1[1] + region1[3]) / h])
+
+        box = np.array([region1[0] / w, region1[1] / h, (region1[0] + region1[2]) / w, (region1[1] + region1[3]) / h]) # w, h in (0 , 1)
         tic = time.time()
         tracker = Dimp_LTMU_Tracker(image, region, p=p, groundtruth=groundtruth, tracker_name=tracker_name, tracker_params=tracker_params)
         score_map, score_max = tracker.get_first_state()

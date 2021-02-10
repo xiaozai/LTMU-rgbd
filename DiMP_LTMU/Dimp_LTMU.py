@@ -463,8 +463,9 @@ class Dimp_LTMU_Tracker(object):
             self.local_Tracker.filter_optimizer.run(self.local_Tracker.params.CG_iter)
 
 
-    def tracking(self, image):
-        self.i += 1
+    def tracking(self, image, count=True):
+        if count:
+            self.i += 1
         mask = None
         candidate_bboxes = None
         # state, pyscore = self.pymdnet_track(image)
