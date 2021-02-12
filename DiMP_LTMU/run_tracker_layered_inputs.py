@@ -157,7 +157,8 @@ def read_colormap(file_name, depth_threshold=None):
     colormap = cv2.applyColorMap(depth, cv2.COLORMAP_JET)
     return colormap
 
-def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, layer_bin=1000, layer_index=None):
+def read_fixed_layered_depth(file_name, target_box=None, depth_threshold=None,
+                             K=10, layer_bin=1000, layer_index=None):
     '''
      To split the depth values :
         - 1) fixed  bins, e.g. 0-1000, 1000-2000, 2000-3000, 3000-4000, ....
@@ -165,20 +166,17 @@ def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, l
                                      e.g. K-Cluster(depth) -> dp = 30, 1000, 4500, 8000 -> Layer_30, Layer_1000, .... Layer_dp
 
     We use the 1) now !!!!!!, one problem, K and Step affect the performance, especially for indoor scene, needs the optimal K and Step
-    '''
-    depth = cv2.imread(file_name, -1)
 
-
-    '''
     How to decide the K and layer_bin ??
     1) according to the distance in the whole image ? closed (0-3m), medium distance (3m - 10m) , far (>10m)
     2) according to the distance in the inital box ?? assum that the farset distance is 2*D_initbox ? then K = 10
+
     '''
+    # 1) get the depth image
+    depth = cv2.imread(file_name, -1)
 
+    # 2) decide the K and layer bin and the target depth
     if target_box is not None:
-        target_box = [int(bb) for bb in target_box]
-        target_patch = depth[target_box[1]:target_box[1]+target_box[3], target_box[0]:target_box[0]+target_box[2]]
-
         '''
         Find the possible target depth, by using the K-means,
             - assume that the init_box covers most the target, + few pixels belong to background(very large)
@@ -186,6 +184,8 @@ def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, l
             - calculate the most frequency pixels, which belong to target
             - if there is only the target in the box, then two centers will be similar, it is okay!
         '''
+        target_box = [int(bb) for bb in target_box]
+        target_patch = depth[target_box[1]:target_box[1]+target_box[3], target_box[0]:target_box[0]+target_box[2]]
         target_depth_values = target_patch.copy().reshape((-1, 1))
         num_cluster = 2
         kmeans = KMeans(init="random", n_clusters=num_cluster, n_init=10, max_iter=300, random_state=42)
@@ -199,12 +199,12 @@ def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, l
 
     if layer_bin is None and K is None:
 
-        ''' 1) according to the distance of the target '''
+        ''' according to the distance of the target '''
         # max_depth = 2.0*target_depth
         # K = 10
         # layer_bin = max_depth // K
 
-        ''' 1) according to the distance of the whole image'''
+        ''' according to the distance of the whole image'''
         # Only for Initial images, roughly decide is indoor or outdoor
         max_depth = np.max(depth)
 
@@ -227,27 +227,27 @@ def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, l
             depth = depth
 
     H, W = depth.shape[0], depth.shape[1]
-    # depth_layers = np.zeros((H, W, K*3), dtype=np.float32)
     depth_layers = np.zeros((H, W, K), dtype=np.float32)
+    target_in_layer = np.zeros((K,), dtype=np.int32) # count how many pixels of target patch in each layer
 
-    target_in_layer = np.zeros((K,), dtype=np.int32)
-
+    ''' Current we only conside the neighbour layers '''
     if layer_index is not None:
-        start_idx = layer_index - 2 # layer_index-1 if layer_index-1 > 0 else 0
-        end_idx = layer_index + 3 # layer_index+2 if layer_index+2 < K else K
+        neighbour_layers = 2                         # centered at layer_index, C-N : C+N
+        start_idx = layer_index - neighbour_layers   # layer_index-1 if layer_index-1 > 0 else 0
+        end_idx = layer_index + neighbour_layers+1   # layer_index+2 if layer_index+2 < K else K
     else:
         start_idx = 0
         end_idx = K
 
+    ''' To get the layers
+        1) to decide the boarders, low and high
+        2) to mask the depth layers
+        3) to normalize the layers by using the low and high
+        4) to decide if the current layer needs to be returned
+    '''
     for ii in range(start_idx, end_idx):
         temp = depth.copy()
 
-        '''
-            1) to decide the boarders, low and high
-            2) to mask the depth layers
-            3) to normalize the layers by using the low and high
-            4) to decide if the current layer needs to be returned
-        '''
         if ii > -1 and ii < K:
             low = ii * layer_bin
             if ii == K-1:
@@ -265,10 +265,6 @@ def read_layered_depth(file_name, target_box=None, depth_threshold=None, K=10, l
                 target_values[target_values > 0] = 1
                 target_in_layer[ii] = np.sum(target_values)
 
-            # temp = cv2.normalize(temp, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
-            # temp = np.asarray(temp, dtype=np.uint8)
-            # temp = cv2.applyColorMap(temp, cv2.COLORMAP_JET)
-            # depth_layers[..., ii*3:(ii+1)*3] = temp
             depth_layers[..., ii] = temp
 
     return depth_layers, np.argmax(target_in_layer), K, layer_bin
@@ -289,21 +285,37 @@ def read_rgbd(file_name, normalize=True):
     color = np.asarray(cv2.imread(color_filename), dtype=np.float32)            # H * W * 3
     b, g, r = color[..., 0], color[..., 1], color[..., 2]
     rgbd = cv2.merge((r, g, b, depth))
-    return rgbd # np.asarray(rgbd, dtype=np.float32) # Song : remember to check the value in depth change or not , from uint8 to 32f ???
+    return rgbd # np.asarray(rgbd, dtype=np.float32)
+    # Song : remember to check the value in depth change or not , from uint8 to 32f ???
 
-def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None, target_box=None, K=10, layer_bin=1000, layer_index=None):
-
+def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None,
+              target_box=None, K=None, layer_bin=None, layer_index=None):
+    '''
+    Parameters for the layered inputs , e.g. dtype= layered_colormap, layered_raw_depth, layered_normalized_depth
+        -     K      : the number of layers to be splitted
+        - layer_bin  : the distance of each layer
+        - layer_index: the index of the layer containg the target
+        - target_box : the gt box or the predicted box containing the possible target
+    '''
     if dtype == 'rgb':
         image = cv2.cvtColor(cv2.imread(image_dir), cv2.COLOR_BGR2RGB)
-    elif dtype == 'depth':
-        image = read_depth(image_dir, normalize=normalize) # H * W * 3, [dp, dp, dp]
+    elif dtype == 'raw_depth':
+        image = read_depth(image_dir, normalize=False) # H * W * 3, [dp, dp, dp]
+    elif dtype == 'normalized_depth':
+        image = read_depth(image_dir, normalize=True) # H * W * 3, [dp, dp, dp] normalized
     elif dtype == 'colormap':
         image = read_colormap(image_dir, depth_threshold=depth_threshold) # H * W * 3
-    elif dtype == 'rgbd':
-        image = read_rgbd(image_dir, normalize=normalize) # H * W * 4
-    elif dtype in ['layered_colormap', 'layered_depth']:
-        ''' return H x W x K , k layers '''
-        image = read_layered_depth(image_dir, target_box=target_box, depth_threshold=depth_threshold, K=K, layer_bin=layer_bin, layer_index=layer_index)
+    elif dtype == 'raw_rgbd':
+        image = read_rgbd(image_dir, normalize=False) # H * W * 4, rgb + raw_depth
+    elif dtype == 'normalized_rgbd':
+        image = read_rgbd(image_dir, normalize=True) # H * W * 4, rgb + normalized_depth
+    elif dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
+        ''' 1) fixed K layeres, e.g. 0-1000, 1000-2000, ... 9000-10000, 10000-maxdepth '''
+        image = read_fixed_layered_depth(image_dir, depth_threshold=depth_threshold, target_box=target_box,
+                                         K=K, layer_bin=layer_bin, layer_index=layer_index) # H x W x K , k layers
+        ''' 2) centered at previous prediction, e.g. Center-Radius <--> Center+Radius, + whole image'''
+        # image = read_centered_layered_depth(image_dir, depth_threshold=depth_threshold,
+        #                                     target_box=target_box, radius=radius)         # H x W x K , k layers
     else:
         print('unknown input type : %s'%dtype)
         image = None
@@ -311,6 +323,7 @@ def get_image(image_dir, dtype='rgb', normalize=True, depth_threshold=None, targ
     return image
 
 def get_averageArea(scores, bboxes, index, N=10):
+    ''' get the average area of previous N reliable (conf > 0.5) frames '''
     avgArea = 0.0
     count = 0
     while count < N and index > -1:
@@ -321,11 +334,11 @@ def get_averageArea(scores, bboxes, index, N=10):
             avgArea += box[2]*box[3]
             count += 1
             index -= 1
-    if count > 0:
-        return 1.0 * avgArea / count
-    else:
-        return 0.0
+
+    return 1.0 * avgArea / count if count > 0 else 0.0
+
 def get_averageScore(scores, index, N=10):
+    ''' get the average area of previous N frames '''
     avgScore = 0.0
     count = 0
     while count < N and index > -1:
@@ -342,13 +355,18 @@ def get_layer_from_images(image, layer_index, dtype):
         temp_image = cv2.normalize(temp_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         temp_image = np.asarray(temp_image, dtype=np.uint8)
         temp_image = cv2.applyColorMap(temp_image, cv2.COLORMAP_JET)
-    else:
-        # process the depth ??
+    elif dtype == 'layered_raw_depth':
         temp_image = temp_image
+        temp_image = cv2.merge((temp_image, temp_image, temp_image))
+    elif dtype == 'layered_normalized_depth':
+        temp_image = cv2.normalize(temp_image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
+        temp_image = np.asarray(temp_image, dtype=np.uint8)
+        temp_image = cv2.merge((temp_image, temp_image, temp_image))
 
     return temp_image
 
-def search_neighbour(tracker, temp_layer_index, image, p, previous_area, init_area, temp_results, use_conf=True, use_max_min_scale=True, use_init_scale=True):
+def search_neighbour(tracker, temp_layer_index, image, p, previous_avgArea, init_area, temp_results,
+                     use_conf=True, use_max_min_scale=True, use_init_scale=True):
 
     temp_region, temp_score_map, temp_iou, temp_score_max, temp_dis = temp_results
 
@@ -358,25 +376,21 @@ def search_neighbour(tracker, temp_layer_index, image, p, previous_area, init_ar
 
     '''Consider the Area or Shape change'''
     temp_area_neigh = temp_region_neigh[2] * temp_region_neigh[3]
-    temp_area_scale_factor = 1.0 * max(temp_area_neigh, previous_area) / (min(temp_area_neigh, previous_area)+1.0)
+    temp_area_scale_factor = 1.0 * max(temp_area_neigh, previous_avgArea) / (min(temp_area_neigh, previous_avgArea)+1.0)
     # temp_area_scale_factor = 1.0 * max(temp_area_neigh, init_area) / (min(temp_area_neigh, init_area)+1.0)
 
-    # print(temp_score_max_neigh > temp_score_max, temp_area_scale_factor < p.area_max_min_factor, temp_area_neigh > init_area *  p.init_area_scale_factor)
     update = True
     if use_conf:
-        update = update and temp_score_max_neigh > max(temp_score_max, p.conf_threshold) #  temp_score_max #
+        update = update and temp_score_max_neigh > max(temp_score_max, p.conf_threshold)
     if use_max_min_scale:
         update = update and temp_area_scale_factor < p.area_max_min_factor
     if use_init_scale:
         update =  update and temp_area_neigh > init_area *  p.init_area_scale_factor
 
     if update:
-        print('----- now move to the previous(closer) or next(far) layer.')
-        temp_region, temp_score_map, temp_iou, temp_score_max, temp_dis = temp_region_neigh, temp_score_map_neigh, temp_iou_neigh, temp_score_max_neigh, temp_dis_neigh
+        temp_results = (temp_region_neigh, temp_score_map_neigh, temp_iou_neigh, temp_score_max_neigh, temp_dis_neigh)
+    print('------ Move: ', update, ' layer_neigh: ', temp_layer_index, ' score: ', temp_score_max_neigh, 'area : ', temp_area_neigh, 'init_area: ', init_area)
 
-    print('------ Move: ', update, '-- layer_neigh: ', temp_layer_index, ' score: ', temp_score_max_neigh, 'area : ', temp_area_neigh, 'init_area: ', init_area)
-
-    temp_results = (temp_region, temp_score_map, temp_iou, temp_score_max, temp_dis)
     return temp_results, update
 
 def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50'):
@@ -384,6 +398,8 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         - p.dtype : the data type for inputs, e.g. rgb, colormap, depth, rgbd
             - rgb      : H x W x 3
             - depth    : 1) normalzie to [0, 255], 2) concatenate the channels , [depth, depth, depth]
+                - raw depth
+                - normalized_depth
             - colormap : 1) normalzie depth images, 2) convert to colormap, JET
             - rgbd     : H x W x (3+1), rgb+depth, [..., :3] = rgb, [..., 3:] = depth
 
@@ -392,8 +408,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
     '''
 
     m_shape = 19
-    # base_save_path = os.path.join('./results', p.name, Dataset)
-    base_save_path = os.path.join('/home/yan/Data2/vot-workspace/results/', p.name, Dataset)
+    base_save_path = os.path.join('/home/yan/Data2/vot-workspace/results/', p.name, Dataset+'+'+p.dtype)
     # if not os.path.exists(base_save_path):
     #     if p.save_results and not os.path.exists(os.path.join(base_save_path, 'eval_results')):
     #         os.makedirs(os.path.join(base_save_path, 'eval_results'))
@@ -413,9 +428,9 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                 continue
 
         if p.dtype == 'rgbd':
-            color_image_list = os.listdir(sequence_dir['color'])
-            color_image_list.sort()
-            image_list = [im[:-4] for im in color_image_list if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
+            color_images = os.listdir(sequence_dir['color'])
+            color_images.sort()
+            image_list = [im[:-4] for im in color_images if im.endswith("jpg") or im.endswith("jpeg") or im.endswith("png")]
             image_dir = {}
             image_dir['color'] = sequence_dir['color'] + image_list[0] + '.jpg'
             image_dir['depth'] = sequence_dir['depth'] + image_list[0] + '.png'
@@ -428,30 +443,42 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         region = Region(groundtruth[0, 0], groundtruth[0, 1], groundtruth[0, 2], groundtruth[0, 3])
         region1 = groundtruth[0]
 
-        if p.dtype in ['layered_colormap', 'layered_depth']:
-            image, layer_index, K, layer_bin = get_image(image_dir, dtype=p.dtype, target_box=region1, depth_threshold=p.depth_threshold, K=None, layer_bin=None, layer_index=None)
+        if p.dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
+            '''return H*W*K depth layers'''
+            image, layer_index, K, layer_bin = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold,
+                                                         target_box=region1, K=None, layer_bin=None, layer_index=None)
             print('K = %d, layer_bin = %d'%(K, layer_bin))
         else:
+            ''' return H*W*3 images, e.g. colormap, rgb, raw_depth, normalized depth , Or rgbd'''
             image = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold)
+
         h = image.shape[0]
         w = image.shape[1]
 
         box = np.array([region1[0] / w, region1[1] / h, (region1[0] + region1[2]) / w, (region1[1] + region1[3]) / h]) # w, h in (0 , 1)
         tic = time.time()
 
-        ''' For the layered inputs, we use the layer which contains the target to initialize the tracker'''
-        if p.dtype in ['layered_colormap', 'layered_depth']:
+        ''' Initialize : for the layered inputs, we use the layer which contains the target to initialize the tracker'''
+        if p.dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
             input_image = get_layer_from_images(image, layer_index, p.dtype)
         else:
             input_image = image
         tracker = Dimp_LTMU_Tracker(input_image, region, p=p, groundtruth=groundtruth, tracker_name=tracker_name, tracker_params=tracker_params)
+
+        ''' -------------- Song : we add some new parameters here ------------'''
+        ''' Song : we copy a tracker here '''
         temp_tracker = tracker
         temp_tracker_available = True
+        ''' Song : we keep the initial tracker for reset '''
         init_tracker = tracker
         init_layer_index = layer_index
-        num_occlusion_frames = 0     # count how much frames are occluded
-        previous_occlusion_idx = -1
         reset = False
+        ''' Song : we keep the init area of the target, if the current area < init_area*0.1 ? '''
+        init_area = region1[2] * region1[3]
+        ''' Song : we count the frames when the area is too small, e.g. occlusion, out-of-view, rotation'''
+        small_area_frames = 0
+        prev_small_area_idx = -1
+        # ----------------------------------------------------------------------
 
         score_map, score_max = tracker.get_first_state()
         t = time.time() - tic
@@ -465,10 +492,8 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         bBoxes_train = np.zeros((num_frames, 8))
         bBoxes_train[0, :] = [box[0], box[1], box[2], box[3], 0, 1, score_max, 0]
 
-        init_area = region1[2] * region1[3] # the init_area
-
-        if p.dtype in ['layered_colormap', 'layered_depth']:
-            # Record the layer index and the reliable score
+        # Song : Record the layer index and the reliable score
+        if p.dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
             layers_results = np.zeros((num_frames,), dtype=np.int32)
             layers_results[0] = layer_index
 
@@ -493,67 +518,71 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                 - to find the lastest score > threshold ?
                 - to find the suitable areas
             '''
-            if p.dtype in ['layered_colormap', 'layered_depth']:
-                temp_im_id = im_id
-                layer_index = layers_results[temp_im_id-1]
+            if p.dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
 
-                previous_avgScore = get_averageScore(layers_scores, im_id-1, N=20)
-
-                '''
-                Re-set the tracker
-                '''
-                if reset:
-                    tracker = init_tracker
-                    layer_index = init_layer_index
-                    previous_area = init_area
-                    reset = False
-                else:
-                    previous_area = get_averageArea(layers_scores, bBoxes_results, im_id-1, N=20)
-
-                previous_score = layers_scores[temp_im_id-1]
-                previous_status = previous_score < p.conf_threshold
-                while previous_status and temp_im_id > 1:
-                    temp_im_id -= 1
+                # Get layer_index, previous_avgScore, previous_avgArea
+                if not reset:
+                    ''' get a reliable layer_index , whose score > p.conf_threshold '''
+                    temp_im_id = im_id
                     layer_index = layers_results[temp_im_id-1]
                     previous_score = layers_scores[temp_im_id-1]
                     previous_status = previous_score < p.conf_threshold
+                    while previous_status and temp_im_id > 1:
+                        temp_im_id -= 1
+                        layer_index = layers_results[temp_im_id-1]
+                        previous_score = layers_scores[temp_im_id-1]
+                        previous_status = previous_score < p.conf_threshold
 
-                image, _, _, _ = get_image(image_dir, dtype=p.dtype, target_box=None, depth_threshold=p.depth_threshold, K=K, layer_bin=layer_bin, layer_index=layer_index)
+                    n_history = 20
+                    previous_avgScore = get_averageScore(layers_scores, im_id-1, N=n_history)
+                    previous_avgArea = get_averageArea(layers_scores, bBoxes_results, im_id-1, N=n_history)
+                else:
+                    ''' Re-set the tracker , using the inital parameters '''
+                    tracker = init_tracker
+                    layer_index = init_layer_index
+                    previous_avgArea = init_area
+                    previous_avgScore = 1.0
+                    reset = False
+
+                image, _, _, _ = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold,
+                                           target_box=None, K=K, layer_bin=layer_bin, layer_index=layer_index)
             else:
                 image = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold)
 
             '''Song's comments
-            To perform tracking on each layer, start from previous predicted layer
-                - layer_index
-                    - layer_index -1 , closer
-                    - layer_index + 1, far away
+                To perform tracking on each layer, start from previous predicted layer
+                    - layer_index
+                        - layer_index -1 , closer
+                        - layer_index + 1, far away
 
                 until target is find or layer_index == -1 or K ?
 
-                1) naive strategy : only search (i-1, i, i+1)
-                2) comlicated strategy : search all layers, weighted with the distancew, find the maximum score, --> super slow
+                1) naive strategy      : only search (i-1, i, i+1)
+                2) comlicated strategy : search all layers, weighted with the distancew, find the maximum score,
+                                         --> super slow
+                3) only search the target-centered layer + the whole images
             '''
 
-            if p.dtype in ['layered_colormap', 'layered_depth']:
+            if p.dtype in ['layered_colormap', 'layered_raw_depth', 'layered_normalized_depth']:
                 ''' 1) search the target in the optimal layer '''
                 temp_layer_index = layer_index
                 input_image = get_layer_from_images(image, temp_layer_index, p.dtype)
                 temp_region_i, temp_score_map_i, temp_iou_i, temp_score_max_i, temp_dis_i = tracker.tracking(input_image)
                 temp_area = temp_region_i[2] * temp_region_i[3]
+                temp_results = (temp_region_i, temp_score_map_i, temp_iou_i, temp_score_max_i, temp_dis_i)
 
                 ''' Song: naive search in (i-1, i+1)
-                When to search ??
-                    - conf < conf_threshold              -- > prediction is not reliable
-                    - area < (avg_area or init_area*0.1) --> rotated or occluded or out-of-view
+                    When to search ??
+                        - conf < conf_threshold              -- > prediction is not reliable
+                        - area < (avg_area or init_area*0.1) --> rotated or occluded or out-of-view
                 '''
-                temp_results = (temp_region_i, temp_score_map_i, temp_iou_i, temp_score_max_i, temp_dis_i)
-                if temp_score_max_i < p.conf_threshold or temp_area < previous_area * p.init_area_scale_factor:
+                if temp_score_max_i < p.conf_threshold or temp_area < previous_avgArea * p.init_area_scale_factor:
                     '''search previous layer and update'''
                     neighbour_update = False
                     for l_i in [-1, 1, -2, 2]:
                         neighbour_layer_index = temp_layer_index + l_i
                         if neighbour_layer_index > -1 and neighbour_layer_index < K:
-                            temp_results, update = search_neighbour(tracker, neighbour_layer_index, image, p, previous_area, init_area, temp_results)
+                            temp_results, update = search_neighbour(tracker, neighbour_layer_index, image, p, previous_avgArea, init_area, temp_results)
                             neighbour_update = neighbour_update or update
                             if update:
                                 layer_index = neighbour_layer_index
@@ -564,62 +593,68 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                             for l_i in [0, -1, 1, -2, 2]:
                                 neighbour_layer_index = temp_layer_index + l_i
                                 if neighbour_layer_index > -1 and neighbour_layer_index < K:
-                                    temp_results, update  = search_neighbour(temp_tracker, neighbour_layer_index, image, p, previous_area, init_area, temp_results)
+                                    temp_results, update  = search_neighbour(temp_tracker, neighbour_layer_index, image, p, previous_avgArea, init_area, temp_results)
                                     if update:
-                                        print('-----------------------------------------Rollback the tracker --------------------------------------------------')
+                                        print('-----------------------------------------Rollback the tracker to previous temp --------------------------------------------------')
                                         tracker = temp_tracker
                                         temp_tracker_available = False
                                         layer_index = neighbour_layer_index
                                         break
 
                     if abs(layer_index -  temp_layer_index) > 2:
-                        print('Target moves too far... not be reliable ')
-                        # input_image = get_layer_from_images(image, temp_layer_index, p.dtype)
-                        # temp_region_neigh, temp_score_map_neigh, temp_iou_neigh, temp_score_max_neigh, temp_dis_neigh = tracker.tracking(input_image, count=False)
+                        print('Target moves too far... not be reliable , do not update')
                         temp_results = (temp_region_i, temp_score_map_i, temp_iou_i, temp_score_max_i, temp_dis_i)
                         layer_index = temp_layer_index
 
-                elif temp_area > init_area * p.reset_area_factor and previous_area > init_area * p.reset_area_factor and previous_avgScore > p.conf_rollback and im_id%p.rollback_iter==0:
-                    print('------------------------Copy Tracker ------------------------------------------------------------------------------------')
-                    temp_tracker = tracker
-                    temp_tracker_available = True
-
-                '''    Song's comments
-                    During the occlusion, the tracker traps on some depth distractors, e,g. small color patches
-                    which cause the model dfrit, and after occlusion, the tracker can not re-detect the target anymore
-                    so we re-set the tracker back to the inital one
-                '''
+                else:
+                    keep_temp_tracker = True
+                    keep_temp_tracker = keep_temp_tracker and temp_area > init_area * p.reset_area_factor         # area scales in a range
+                    keep_temp_tracker = keep_temp_tracker and previous_avgArea > init_area * p.reset_area_factor  # compared to the inital area
+                    keep_temp_tracker = keep_temp_tracker and previous_avgScore > p.conf_rollback                 # iter
+                    if  keep_temp_tracker and im_id%p.rollback_iter==0:
+                        print('------------------------Copy Tracker --------------------------')
+                        temp_tracker = tracker
+                        temp_tracker_available = True
 
                 region, score_map, iou, score_max, dis = temp_results
 
+                '''    Song's comments
+                    if the predicted area is tooooo small, it may happen :
+                        - after target re-appears, the tracker still traps on some depth distractors, e,g. small color patches
+                        - occlusion cases
+                        - out-of-view cases
+                        - rotation , tracker lost .. the most difficult cases in depth-only tracking
+
+                    so we decide to re-set the tracker back to the inital one
+                '''
                 temp_area = region[2]*region[3]
                 if temp_area < init_area * p.reset_area_factor:
-                    print('occluded - occluded - occluded ', num_occlusion_frames, '................. !!!!!!!!!!!!!!!')
-                    if previous_occlusion_idx == im_id - 1:
-                        num_occlusion_frames += 1
-                        previous_occlusion_idx = im_id
+                    print('!!!!!!!!!!!!! Frame %d : the predicted area is too small  %f vs init_area %f!!!!!!!!!!!!!!!'%(im_id, temp_area, init_area))
+                    if prev_small_area_idx == im_id - 1:
+                        small_area_frames += 1
+                        prev_small_area_idx = im_id
 
                     else:
-                        previous_occlusion_idx = im_id
-                        num_occlusion_frames = 1
+                        prev_small_area_idx = im_id
+                        small_area_frames = 1
 
-                    if num_occlusion_frames > 20:
-                        print('!!!!!!!!!!!!!!! long term occlusion or too small object, back to initial status .........')
-                        num_occlusion_frames = 0
+                    if small_area_frames > 20:
+                        print('!!!!!!!!!!!!!!! long term too small object, re-set the tracker to the inital one !!!!!!!!!!')
+                        small_area_frames = 0
                         reset = True
                 else:
-                    num_occlusion_frames = -1
+                    small_area_frames = -1
 
 
                 layers_results[im_id] = layer_index
 
-                if num_occlusion_frames > 0:
+                if small_area_frames > 0:
                     ''' if the estimated shape is too small, don't believe it '''
                     layers_scores[im_id] = 1.0 * temp_area / init_area
                 else:
                     layers_scores[im_id] = score_max
 
-                print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + ' layer : %d'%layer_index + ' score: %f'%score_max + ' area: %f'%(1.0 * region[2]*region[3]) + ' avg_previous_are : %s'%previous_area, 'init_area: ', init_area)
+                print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + ' layer : %d'%layer_index + ' score: %f'%score_max + ' area: %f'%(1.0 * region[2]*region[3]) + ' avg_previous_are : %s'%previous_avgArea, 'init_area: ', init_area)
             else:
                 region, score_map, iou, score_max, dis = tracker.tracking(image)
                 print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + "score: %f"%score_max)
@@ -655,7 +690,7 @@ def eval_tracking(Dataset, p, mode=None, video=None, tracker_name='dimp', tracke
         for c in classes:
             sequence_list, data_dir = get_seq_list(Dataset, mode=mode, classes=c)
             run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
-    elif Dataset in ['votlt18', 'votlt19', 'tlp', 'otb', 'demo', 'cdtb_depth', 'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
+    elif Dataset in ['votlt18', 'votlt19', 'tlp', 'otb', 'demo', 'cdtb_depth',  'cdtb_colormap', 'cdtb_color', 'cdtb_rgbd']:
         sequence_list, data_dir = get_seq_list(Dataset, video=video)
         run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name=tracker_name, tracker_params=tracker_params)
     else:

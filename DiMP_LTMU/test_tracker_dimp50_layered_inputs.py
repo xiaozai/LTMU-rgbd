@@ -5,10 +5,10 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # test DiMP_LTMU
 p = p_config()
 p.save_results = True
-p.visualization = True
+p.visualization = False
+p.use_mask = False
 p.name = 'DiMP50_LTMU'
 
-dataset = 'cdtb_colormap'
 p.area_max_min_factor = 1.8
 p.init_area_scale_factor = 0.1
 p.conf_threshold = 0.45
@@ -43,4 +43,8 @@ p.reset_area_factor = 0.3
 
     - should consider the 3D position of the target, (x,y) in RGB, z in depth
 '''
-eval_tracking(dataset, p=p, tracker_name='dimp', tracker_params='dimp50_colormap')
+
+dataset = 'cdtb_depth'
+p.dtype = 'layered_raw_depth' # layered_colormap, layered_raw_depth, layered_normalized_depth, rgb, rgbd, colormap, raw_depth, layered_raw_depth
+
+eval_tracking(dataset, p=p, tracker_name='dimp', tracker_params='dimp50_depth')
