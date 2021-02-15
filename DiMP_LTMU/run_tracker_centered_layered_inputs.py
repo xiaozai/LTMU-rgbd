@@ -278,10 +278,10 @@ def read_centered_layered_depth(file_name, target_box=None, depth_threshold=None
     '''
     # 1) get the depth image
     depth = cv2.imread(file_name, -1)
+    depth = np.nan_to_num(depth, nan=0.0) # np.max(depth)
 
     H, W = depth.shape[0], depth.shape[1]
     depth_layers = np.zeros((H, W, 2), dtype=np.float32)
-    depth_layers[..., 1] = depth
 
     # 2) decide the K and layer bin and the target depth
     if target_box is None and target_depth is None:
@@ -302,28 +302,46 @@ def read_centered_layered_depth(file_name, target_box=None, depth_threshold=None
     low = max(target_depth-radius, 0)
     high = target_depth + radius
 
-    temp = depth.copy()
-    temp[temp < low] = low - 10    # if the target is on the boarder ?????
-    temp[temp > high] = high + 10  # acturaly no effect
+    layer = depth.copy()
+    layer[layer < low] = high + 10 #  low - 10    # if the target is on the boarder ?????
+    layer[layer > high] = high + 10  # acturaly no effect
 
-    depth_layers[..., 0] = temp
+    depth_layers[..., 0] = layer
+
+    # if target_depth > 10.0:
+    #     max_depth = target_depth * 2.0 # ???
+    #     depth[depth > max_depth] = max_depth
+    depth_layers[..., 1] = depth
 
     return depth_layers, target_depth
 
 def get_target_depth(depth, target_box):
     target_box = [int(bb) for bb in target_box]
     target_patch = depth[target_box[1]:target_box[1]+target_box[3], target_box[0]:target_box[0]+target_box[2]]
-    target_depth_values = target_patch.copy().reshape((-1, 1))
+    # target_depth_values = target_patch.copy().reshape((-1, 1))
 
-    num_cluster = 2
-    kmeans = KMeans(init="random", n_clusters=num_cluster, n_init=10, max_iter=300, random_state=42)
-    kmeans.fit(target_depth_values)
-    depth_centers = kmeans.cluster_centers_
-    depth_labels = kmeans.labels_
-    depth_frequencies = []
-    for ii in range(num_cluster):
-        depth_frequencies.append(np.sum(depth_labels[depth_labels==ii]))
-    target_depth = depth_centers[np.argmax(depth_frequencies)][0]
+    # num_cluster = 2
+    # kmeans = KMeans(init="random", n_clusters=num_cluster, n_init=10, max_iter=300, random_state=42)
+    # kmeans.fit(target_depth_values)
+    # depth_centers = kmeans.cluster_centers_
+    # depth_labels = kmeans.labels_
+    # depth_frequencies = []
+    # for ii in range(num_cluster):
+    #     depth_frequencies.append(np.sum(depth_labels[depth_labels==ii]))
+    # target_depth = depth_centers[np.argmax(depth_frequencies)][0]
+
+
+    target_depth_values = target_patch.flatten()
+    # target_depth = np.mean(target_depth_values)
+
+    target_depth_values.sort()
+    if len(target_depth_values) > 0:
+        target_depth = target_depth_values[int(len(target_depth_values)/2)]   # Song : middle value
+        # target_depth = target_depth_values[int(len(target_depth_values)/3)]     # Song: assume that (foreground -> target depth -> backgorund)
+        # target_depth = target_depth_values[int(len(target_depth_values)/3.5)]     # Song: assume that (foreground -> target depth -> backgorund)
+        # target_depth = np.mean(target_depth_values[int(len(target_depth_values)/3.0) : int(len(target_depth_values)*2/3.0)])
+    else:
+        target_depth= 0.0
 
     return target_depth
 
@@ -668,6 +686,23 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                                     tracker = tracker_copy
                                     tracker_copy_available = False
                                     temp_target_depth = get_target_depth(image[..., 1], temp_results[0])
+                        #
+                        # print('------------------------- using the init-trtacker --------------')
+                        # temp_results, update  = search_layer(init_tracker, 0, image, p, prev_avgArea, prev_avgDepth, init_area, temp_results)
+                        #
+                        # if update:
+                        #     print('-----------------------------------------Rollback the tracker to previous temp --------------------------------------------------')
+                        #     tracker = init_tracker
+                        #     # tracker_copy_available = False
+                        #     temp_target_depth = get_target_depth(image[..., 0], temp_results[0])
+                        #
+                        # else:
+                        #     temp_results, update  = search_layer(init_tracker, 1, image, p, prev_avgArea, prev_avgDepth, init_area, temp_results)
+                        #     if update:
+                        #         print('-----------------------------------------Rollback the tracker to previous temp --------------------------------------------------')
+                        #         tracker = init_tracker
+                        #         # tracker_copy_available = False
+                        #         temp_target_depth = get_target_depth(image[..., 1], temp_results[0])
                 else:
 
                     '''
@@ -726,7 +761,11 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                 previous_depths[im_id] = temp_target_depth
                 previous_scores[im_id] = score_max
 
-                print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + ' temp_target_depth : %f'%temp_target_depth + ' score: %f'%score_max + ' area: %f'%(1.0 * region[2]*region[3]) + ' avg_previous_are : %s'%prev_avgArea, 'init_area: ', init_area)
+                print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list)
+                      + ' temp_target_depth : %f'%temp_target_depth + ' score: %f'%score_max
+                      + ' area: %f'%(1.0 * region[2]*region[3]) + ' avg_previous_are : %s'%prev_avgArea
+                      + ' init_area: %f'%init_area
+                      + ' init_depth : %f'%init_target_depth)
             else:
                 region, score_map, iou, score_max, dis = tracker.tracking(image)
                 print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + "score: %f"%score_max)

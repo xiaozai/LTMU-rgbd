@@ -6,7 +6,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 p = p_config()
 p.save_results = True
 p.visualization = True
-p.use_mask = True
+p.use_mask = False
 p.name = 'DiMP50_LTMU'
 
 
@@ -40,9 +40,10 @@ dataset = 'cdtb_colormap'
 p.dtype = 'centered_colormap'
 p.depth_threshold = None
 
+
 p.minimun_area_threshold = 0.1    # area changes compared to init_area
-p.area_scale_threshold = 1.5     # area changes compared to prev_avg_area
-p.conf_threshold = 0.5      # Consider the prediction reliable
+p.area_scale_threshold = 1.5      # area changes compared to prev_avg_area
+p.conf_threshold = 0.5            # Consider the prediction reliable
 p.target_depth_changes_threshold = 1.5
 p.conf_rollback = 0.95
 p.area_rollback = 0.9

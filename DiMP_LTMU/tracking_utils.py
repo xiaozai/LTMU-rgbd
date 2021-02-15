@@ -5,7 +5,7 @@ import numpy as np
 def show_res(im, box, win_name,update=None,tracker_score=None,frame_id=None,mask=None,v_score=None, groundtruth=None, can_bboxes=None):
     cv2.namedWindow(win_name,cv2.WINDOW_NORMAL)
     cv2.rectangle(im, (box[1], box[0]),
-                  (box[3], box[2]), [255, 0, 0], 2)  # [0, 102, 51]
+                  (box[3], box[2]), [255, 255, 255], 2)  # [0, 102, 51]
 
     if mask is not None:
         im[:, :, 1] = (mask > 0) * 128 + (mask == 0) * im[:, :, 1]
