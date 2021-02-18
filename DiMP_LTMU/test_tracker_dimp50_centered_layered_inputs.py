@@ -5,7 +5,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # test DiMP_LTMU
 p = p_config()
 p.save_results = True
-p.visualization = True
+p.visualization = False
 p.use_mask = False
 p.name = 'DiMP50_LTMU'
 
@@ -48,6 +48,6 @@ p.target_depth_changes_threshold = 1.5
 p.conf_rollback = 0.95
 p.area_rollback = 0.9
 p.rollback_iter = 50
-p.radius = 1000
+p.radius = 500
 
 eval_tracking(dataset, p=p, tracker_name='dimp', tracker_params='dimp50_colormap')
