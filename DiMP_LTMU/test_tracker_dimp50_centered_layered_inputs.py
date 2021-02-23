@@ -5,7 +5,7 @@ os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 # test DiMP_LTMU
 p = p_config()
 p.save_results = True
-p.visualization = False
+
 p.use_mask = False
 p.name = 'DiMP50_LTMU'
 
@@ -42,12 +42,22 @@ p.depth_threshold = None
 
 
 p.minimun_area_threshold = 0.1    # area changes compared to init_area
-p.area_scale_threshold = 1.5      # area changes compared to prev_avg_area
+p.area_scale_threshold = 1.2      # area changes compared to prev_avg_area
 p.conf_threshold = 0.5            # Consider the prediction reliable
-p.target_depth_changes_threshold = 1.5
+p.target_depth_changes_threshold = 1.5 # 1.2
 p.conf_rollback = 0.95
 p.area_rollback = 0.9
 p.rollback_iter = 50
-p.radius = 500
+
+p.radius = 800
+
+p.visualization = True
+p.grabcut_visualization = True
+p.grabcut_extra = 80
+p.grabcut_rz_factor = 1.5       # 1 / 1.5
+p.grabcut_rz_threshold = 300
+p.grabcut_iter = 3
+
+p.minimun_target_pixels = 16
 
 eval_tracking(dataset, p=p, tracker_name='dimp', tracker_params='dimp50_colormap')

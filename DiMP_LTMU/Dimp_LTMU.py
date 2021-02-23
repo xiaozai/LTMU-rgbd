@@ -462,6 +462,9 @@ class Dimp_LTMU_Tracker(object):
         elif (self.local_Tracker.frame_num - 1) % self.local_Tracker.params.train_skipping == 0:
             self.local_Tracker.filter_optimizer.run(self.local_Tracker.params.CG_iter)
 
+    def manually_update(self, image):
+        ''' Song try to update the tracker '''
+        self.collect_samples_pymdnet(image)
 
     def tracking(self, image, count=True):
         if count:
@@ -517,7 +520,7 @@ class Dimp_LTMU_Tracker(object):
         width = self.last_gt[3] - self.last_gt[1]
         height = self.last_gt[2] - self.last_gt[0]
         toc = time.time() - tic
-        print(toc)
+        print('tracking time: ', toc)
         # if self.flag == 'found' and self.score_max > 0:
         #     confidence_score = 0.99
         # elif self.flag == 'not_found':
