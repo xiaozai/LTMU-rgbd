@@ -374,7 +374,27 @@ class Dimp_LTMU_Tracker(object):
         init_box['init_bbox'] = init_bbox
         self.local_Tracker.initialize(image, init_box)
 
-    def local_track(self, image):
+    def manually_update_local_tracker(self, image, manually_update=True):
+
+        state, score_map, test_x, scale_ind, sample_pos, sample_scales, flag, s = self.local_Tracker.track_updater(image)
+        update_score = 0
+        update_flag = flag not in ['not_found', 'uncertain']
+        update = update_flag
+
+        hard_negative = (flag == 'hard_negative')
+        learning_rate = getattr(self.local_Tracker.params, 'hard_negative_learning_rate', None) if hard_negative else None
+
+        if update and manually_update:
+            train_x = test_x[scale_ind:scale_ind+1, ...]
+
+            # Create target_box and label for spatial sample
+            target_box = self.local_Tracker.get_iounet_box(self.local_Tracker.pos, self.local_Tracker.target_sz,
+                                                           sample_pos[scale_ind, :], sample_scales[scale_ind])
+
+            # Update the classifier model
+            self.local_Tracker.update_classifier(train_x, target_box, learning_rate, s[scale_ind,...])
+
+    def local_track(self, image, manually_update=False):
         state, score_map, test_x, scale_ind, sample_pos, sample_scales, flag, s = self.local_Tracker.track_updater(image)
         update_score = 0
         update_flag = flag not in ['not_found', 'uncertain']
@@ -407,7 +427,7 @@ class Dimp_LTMU_Tracker(object):
         hard_negative = (flag == 'hard_negative')
         learning_rate = getattr(self.local_Tracker.params, 'hard_negative_learning_rate', None) if hard_negative else None
 
-        if update:
+        if update and manually_update:
             # Get train sample
             train_x = test_x[scale_ind:scale_ind+1, ...]
 
@@ -464,21 +484,39 @@ class Dimp_LTMU_Tracker(object):
 
     def manually_update(self, image):
         ''' Song try to update the tracker '''
+        self.manually_update_local_tracker(image, manually_update=True)
         self.collect_samples_pymdnet(image)
 
-    def tracking(self, image, count=True):
+    def tracking(self, image, count=True, manually_update=True, last_gt=None):
         if count:
             self.i += 1
         mask = None
         candidate_bboxes = None
         # state, pyscore = self.pymdnet_track(image)
         # self.last_gt = [state[1], state[0], state[1] + state[3], state[0] + state[2]]
+
+        if last_gt is not None:
+            W, H = last_gt[2], last_gt[3]
+            dist_threshold = max(W,H)*2
+
+            last_gt = np.array(
+                [last_gt[1], last_gt[0], last_gt[1] + last_gt[3], last_gt[0] + last_gt[2]])
+
+            old_center = np.asarray([(self.last_gt[0]+self.last_gt[2])/2.0, (self.last_gt[1]+self.last_gt[3])/2.0])
+            new_center = np.asarray([(last_gt[0]+last_gt[2])/2.0, (last_gt[1]+last_gt[3])/2.0])
+
+            if np.linalg.norm(old_center - new_center) > dist_threshold:
+                print("Update trackers's last gt !!!!!!!!!!!!")
+                self.last_gt = last_gt
+
         self.local_Tracker.pos = torch.FloatTensor(
             [(self.last_gt[0] + self.last_gt[2] - 1) / 2, (self.last_gt[1] + self.last_gt[3] - 1) / 2])
         self.local_Tracker.target_sz = torch.FloatTensor(
             [(self.last_gt[2] - self.last_gt[0]), (self.last_gt[3] - self.last_gt[1])])
+
+
         tic = time.time()
-        local_state, self.score_map, update, local_score, dis, flag, update_score = self.local_track(image)
+        local_state, self.score_map, update, local_score, dis, flag, update_score = self.local_track(image, manually_update=manually_update)
 
         md_score = self.pymdnet_eval(image, np.array(local_state).reshape([-1, 4]))[0]
         self.score_max = md_score
@@ -512,7 +550,8 @@ class Dimp_LTMU_Tracker(object):
                         [(self.last_gt[2] - self.last_gt[0]), (self.last_gt[3] - self.last_gt[1])])
                     self.score_max = candidate_scores[max_id]
                     self.count = 0
-        if update:
+
+        if update and manually_update:
             self.collect_samples_pymdnet(image)
 
         self.pymdnet_long_term_update()

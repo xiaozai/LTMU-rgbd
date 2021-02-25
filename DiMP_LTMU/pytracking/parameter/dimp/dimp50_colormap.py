@@ -10,7 +10,7 @@ def parameters():
     params.use_gpu = True
 
     params.image_sample_size = 18*16
-    params.search_area_scale = 5
+    params.search_area_scale = 3  # 5
 
     # Learning parameters
     params.sample_memory_size = 50

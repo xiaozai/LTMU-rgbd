@@ -49,6 +49,12 @@ class p_config(object):
     grabcut_rz_factor = 2
     grabcut_rz_threshold = 150
 
+    log = True
+
+def log_print(flag, string):
+    if flag:
+        print(string)
+
 class VOTLT_Results_Saver(object):
     def __init__(self, save_path, video, t):
         result_path = os.path.join(save_path, 'rgbd-unsupervised')
@@ -172,7 +178,7 @@ def read_colormap(file_name, depth_threshold=None):
     return colormap
 
 
-def read_depth_and_target_depth(file_name, target_box=None, init=False, p=None):
+def read_depth_and_target_depth(file_name, target_box=None, init=False, p=None, prev_depth=None):
 
     '''  1) get the depth image '''
     depth = cv2.imread(file_name, -1)
@@ -184,7 +190,7 @@ def read_depth_and_target_depth(file_name, target_box=None, init=False, p=None):
         return depth, None
 
     target_box = [int(bb) for bb in target_box]
-    target_depth, _ = get_target_depth(depth, target_box, p=p, init=init)
+    target_depth, _ = get_target_depth(depth, target_box, p=p, init=init, last_depth=prev_depth)
 
     return depth, target_depth
 
@@ -205,6 +211,7 @@ def get_layered_image_by_depth(depth_image, target_depth, p):
     if p.dtype == 'centered_colormap':
         layer = cv2.normalize(layer, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
         layer = np.asarray(layer, dtype=np.uint8)
+        # layer = cv2.equalizeHist(layer)
         layer = cv2.applyColorMap(layer, cv2.COLORMAP_JET)
 
     return layer
@@ -230,7 +237,7 @@ def remove_bubbles(image, bubbles_size=100):
 
     return image
 
-def get_target_depth(depth, target_box, p=None, init=False):
+def get_target_depth(depth, target_box, p=None, init=False, last_depth=None):
 
     '''
         To estimate the target depth by using cv2.grabCut
@@ -249,7 +256,7 @@ def get_target_depth(depth, target_box, p=None, init=False):
     median_depth = np.median(possible_target) + 10
 
     bubbles_size = int(target_box[2]*target_box[3]*p.bubbles_size_factor * 0.25)
-    print('bubbles_size in get_target_depth: ', bubbles_size)
+    log_print(p.log, 'bubbles_size in get_target_depth: %d '%bubbles_size)
 
     ''' add the surrounding extra pixels as the background '''
     extra_y0 = max(y0 - p.grabcut_extra, 0)
@@ -268,30 +275,45 @@ def get_target_depth(depth, target_box, p=None, init=False):
 
     image = target_patch.copy()
     image[image>median_depth*2] = median_depth*2 # !!!!!!!!!!
+    image[image < 10] = median_depth*2
+
     i_H, i_W = image.shape
 
     '''To downsample the target_patch in order to speed up the cv2.grabCut'''
     rz_factor = p.grabcut_rz_factor if min(i_W, i_H) > p.grabcut_rz_threshold else 1
     if rz_factor > 1 :
-        print('!!!!!!!!!!!!! image is too large, to resize the image by factor %f'%rz_factor)
+        log_print(p.log, '!!!!!!!!!!!!! image is too large, to resize the image by factor %f'%rz_factor)
     rect_rz = [int(rt//rz_factor) for rt in rect]
     rz_dim = (int(i_W//rz_factor), int(i_H//rz_factor))
     image = cv2.resize(image, rz_dim, interpolation=cv2.INTER_AREA)
+    rz_depth_patch =  cv2.resize(target_patch, rz_dim, interpolation=cv2.INTER_AREA)
 
     image = remove_bubbles(image, bubbles_size=bubbles_size)
     image = cv2.normalize(image, None, alpha=0, beta=255, norm_type=cv2.NORM_MINMAX, dtype=cv2.CV_32F)
     image = np.asarray(image, dtype=np.uint8)
+    # image = cv2.equalizeHist(image)
     image = cv2.applyColorMap(image, cv2.COLORMAP_JET)
 
+
     mask = np.zeros(image.shape[:2], np.uint8)
+
+    if last_depth is not None:
+        fore_indicator = rz_depth_patch.copy()
+
+        fore_indicator[fore_indicator < last_depth-50] = 0
+        fore_indicator[fore_indicator > last_depth+50] = 0
+        fore_indicator[fore_indicator > 0] = 3
+        fore_indicator = np.asarray(fore_indicator, dtype=np.uint8)
+        mask = mask + fore_indicator
+
     bgdModel = np.zeros((1,65), np.float64)
     fgdModel = np.zeros((1,65), np.float64)
 
     ''' 0-pixels and 2-pixels are background(set to 0), 1-pixels and 3-pixels are foreground(set to 1)'''
-    print('starting grabCut ...')
+    log_print(p.log, 'starting grabCut ...')
     grabCut_tic = time.time()
     cv2.grabCut(image, mask, rect_rz, bgdModel, fgdModel, p.grabcut_iter, cv2.GC_INIT_WITH_RECT)
-    print('grabCut used time : ', time.time() - grabCut_tic)
+    log_print(p.log, 'grabCut used time : %f'%(time.time() - grabCut_tic))
 
     mask2 = np.where((mask==2)|(mask==0),0,1).astype('uint8')
     mask2 = remove_bubbles(mask2, bubbles_size=bubbles_size)
@@ -300,6 +322,7 @@ def get_target_depth(depth, target_box, p=None, init=False):
     ''' Resize back to original size '''
     image = cv2.resize(image, (i_W, i_H), interpolation=cv2.INTER_AREA)
     mask2 = cv2.resize(mask2, (i_W, i_H), interpolation=cv2.INTER_AREA)
+
 
     ''' get the new optimal rect box '''
     #
@@ -333,15 +356,36 @@ def get_target_depth(depth, target_box, p=None, init=False):
     target_pixels = target_pixels[target_pixels>0]
 
     if len(target_pixels) > p.minimun_target_pixels:
-        target_depth = np.median(target_pixels) # target_depth = target_pixels[int(len(target_pixels)/2)]
+        # target_depth = np.median(target_pixels) # target_depth = target_pixels[int(len(target_pixels)/2)]
+        #
+        hist, bin_edges = np.histogram(target_pixels, bins=10)
+        peak_idx = np.argmax(hist)
+        selected_target_pixels = target_pixels
+        target_depth_low = bin_edges[peak_idx]
+        target_depth_high= bin_edges[peak_idx+1]
+        selected_target_pixels = selected_target_pixels[selected_target_pixels<=target_depth_high]
+        selected_target_pixels = selected_target_pixels[selected_target_pixels>=target_depth_low]
+        target_depth = np.median(selected_target_pixels)
+
+        log_print(p.log, 'Target_depth + %f,  Range %f  -  %f'%(target_depth, target_depth_low,target_depth_high))
+
     else:
-        print('can not find the target depth, use the mean value of bbox')
+        log_print(p.log, 'can not find the target depth, use the mean value of bbox')
         target_depth = median_depth
 
     if p.grabcut_visualization:
         cv2.namedWindow('grabcut',cv2.WINDOW_NORMAL)
 
         cv2.rectangle(image, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), [255, 255, 255], 2)  # [0, 102, 51]
+
+        # stack_mask01 = np.asarray(mask*255, np.uint8)
+        mask = cv2.resize(mask, (i_W, i_H), interpolation=cv2.INTER_AREA)
+        stack_mask01 = np.asarray(mask/4*255, np.uint8)
+        stack_mask01 = cv2.merge((stack_mask01, stack_mask01, stack_mask01))
+        cv2.rectangle(stack_mask01, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), [255, 255, 255], 2)  # [0, 102, 51]
+        # cv2.rectangle(stack_mask01, (new_x0, new_y0), (new_x1, new_y1), [255, 0, 0], 2)  # [0, 102, 51]
+
+
         stack_mask = np.asarray(mask2*255, np.uint8)
         stack_mask = cv2.merge((stack_mask, stack_mask, stack_mask))
         cv2.rectangle(stack_mask, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), [0, 0, 255], 2)  # [0, 102, 51]
@@ -350,11 +394,11 @@ def get_target_depth(depth, target_box, p=None, init=False):
         foreground_colorm = image * mask2[:, :, np.newaxis]
         cv2.rectangle(foreground_colorm, (rect[0], rect[1]), (rect[0]+rect[2], rect[1]+rect[3]), [255, 255, 255], 2)  # [0, 102, 51]
 
-        show_imgs = cv2.hconcat((image, stack_mask, foreground_colorm))
+        show_imgs = cv2.hconcat((image, stack_mask01, stack_mask, foreground_colorm))
         cv2.imshow('grabcut', show_imgs)
         cv2.waitKey(1)
 
-        print('Estimated Traget depth = ', target_depth)
+        log_print(p.log, 'Estimated Traget depth = %f'%target_depth)
 
     return target_depth, new_rect
 
@@ -479,7 +523,7 @@ def read_rgbd(file_name, normalize=True):
     return rgbd # np.asarray(rgbd, dtype=np.float32)
     # Song : remember to check the value in depth change or not , from uint8 to 32f ???
 
-def get_image(image_dir, target_box=None, init=False, p=None):
+def get_image(image_dir, target_box=None, init=False, p=None, prev_depth=None):
     '''
     Parameters for the layered inputs , e.g. dtype= layered_colormap, layered_raw_depth, layered_normalized_depth
         -     K      : the number of layers to be splitted
@@ -502,7 +546,7 @@ def get_image(image_dir, target_box=None, init=False, p=None):
 
     elif p.dtype in ['centered_colormap', 'centered_raw_depth', 'centered_normalized_depth']:
         ''' get the depth image and possible target depth '''
-        image = read_depth_and_target_depth(image_dir, target_box=target_box, init=init, p=p)
+        image = read_depth_and_target_depth(image_dir, target_box=target_box, init=init, p=p, prev_depth=prev_depth)
     else:
         print('unknown input type : %s'%dtype)
         image = None
@@ -578,6 +622,7 @@ def get_averageScore_from_history(scores, index, N=10):
 #     return temp_image
 
 def search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results,
+                 last_gt=None,
                  use_conf=True, use_max_min_scale=True, use_init_scale=True, use_depth_scale=True, use_center_scale=True,
                  ):
 # def search_layer(tracker, layer_index, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results,
@@ -589,13 +634,18 @@ def search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, pr
     # input_image = get_layer_from_images(image, layer_index=layer_index, layer_depth=layer_depth, dtype=p.dtype, radius=p.radius, bubbles_size=int(init_area*p.bubbles_size_factor))
     input_image = get_layered_image_by_depth(image, layer_depth, p)
 
-    temp_results_in_layer = tracker.tracking(input_image, count=False)
+    temp_results_in_layer = tracker.tracking(input_image, count=False, manually_update=False, last_gt=last_gt)
 
-    update = True
+    # update = True
+    update = 0
+
     ''' Consider the confidence '''
     if use_conf:
-        conf_changes_in_layer = temp_results_in_layer[-2] > max(temp_results[-3], p.conf_threshold)
-        update = update and  conf_changes_in_layer
+        # conf_changes_in_layer = temp_results_in_layer[-2] > max(temp_results[-3], p.conf_threshold)
+        conf_changes_in_layer = temp_results_in_layer[-2] > temp_results[-3]
+        # update = update and  conf_changes_in_layer
+        if conf_changes_in_layer:
+            update += 1
 
     '''Consider the Area or Shape change'''
     temp_region_in_layer = temp_results_in_layer[0]
@@ -605,33 +655,44 @@ def search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, pr
     temp_center_in_layer = [int(temp_region_in_layer[0]+temp_region_in_layer[2]/2), int(temp_region_in_layer[1]+temp_region_in_layer[3]/2)]
 
     ''' depth changes'''
-    target_depth_in_layer, finetuned_region = get_target_depth(image, temp_region_in_layer, p=p)
-    print('target_depth_in_layer: ', target_depth_in_layer)
+    target_depth_in_layer, finetuned_region = get_target_depth(image, temp_region_in_layer, p=p, last_depth=prev_avgDepth)
+    log_print(p.log, 'target_depth_in_layer: %f'%target_depth_in_layer)
 
     if use_max_min_scale:
         area_changes_in_layer = (1.0 * max(temp_area_in_layer, prev_avgArea) / (min(temp_area_in_layer, prev_avgArea)+1.0)) < p.area_scale_threshold
-        update = update and area_changes_in_layer
+        # update = update and area_changes_in_layer
+        if area_changes_in_layer:
+            update += 1
 
     if use_init_scale:
         area_minimum_in_layer = temp_area_in_layer > init_area *  p.minimun_area_threshold
-        update = update and area_minimum_in_layer
+        # update = update and area_minimum_in_layer
+        update += int(area_minimum_in_layer=='true')
 
     if use_center_scale:
-        center_change_in_layer = np.linalg.norm(np.asarray(temp_center_in_layer) - np.asarray(prev_center)) > np.sqrt(temp_area_in_layer)
-        update = update and center_change_in_layer
+        center_change_in_layer = np.linalg.norm(np.asarray(temp_center_in_layer) - np.asarray(prev_center)) < np.sqrt(prev_avgArea)*1.5
+        # update = update and center_change_in_layer
+
+        if center_change_in_layer:
+            update += 1
 
     ''' Consider the depth changes '''
     if use_depth_scale:
         target_depth_changes_in_layer = (1.0 * max(target_depth_in_layer, prev_avgDepth) / (min(target_depth_in_layer, prev_avgDepth)+1.0))  < p.target_depth_changes_threshold
-        update = update and target_depth_changes_in_layer
+        # update = update and target_depth_changes_in_layer
+        if target_depth_changes_in_layer:
+            update += 1
 
-    if update:
+
+    # if update:
+    if update > 3:
         temp_region, score_map, temp_iou, temp_score_max, temp_dis  = temp_results_in_layer
         temp_results = (finetuned_region, score_map, temp_iou, temp_score_max, temp_dis, target_depth_in_layer)
+        tracker.manually_update(input_image)
 
-    print('- Move: ', update, ' layer_depth: ', layer_depth, ' score: ', temp_results_in_layer[-2], 'area : ', temp_area_in_layer, 'center: ', temp_center_in_layer, 'init_area: ', init_area)
+    print('- Move: ', update>3, ' layer_depth: ', layer_depth, ' score: ', temp_results_in_layer[-2], 'area : ', temp_area_in_layer, 'center: ', temp_center_in_layer, 'init_area: ', init_area)
 
-    return temp_results, update
+    return temp_results, update>2
 
 def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', tracker_params='dimp50'):
     '''Song's comments
@@ -684,7 +745,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
         region1 = groundtruth[0]
 
         if p.dtype in ['centered_colormap', 'centered_raw_depth', 'centered_normalized_depth']:
-            image, init_target_depth = get_image(image_dir, target_box=region1, init=True, p=p)
+            image, init_target_depth = get_image(image_dir, target_box=region1, init=True, p=p, prev_depth=None)
         else:
             ''' return H*W*3 images, e.g. colormap, rgb, raw_depth, normalized depth , Or rgbd'''
             image = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold)
@@ -738,6 +799,8 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
             previous_areas = np.zeros((num_frames, ))
             previous_areas[0] = init_area
 
+        tracker_copy = init_tracker
+
         for im_id in range(1, len(image_list)):
             tic = time.time()
 
@@ -757,6 +820,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                     prev_score = previous_scores[temp_im_id-1]
                     prev_center = previous_centers[temp_im_id-1]
                     prev_area = previous_areas[temp_im_id-1]
+                    prev_bbox = bBoxes_results[temp_im_id - 1, :]
 
                     while prev_score < p.conf_threshold and temp_im_id > 1:
                         temp_im_id -= 1
@@ -764,6 +828,7 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                         prev_score = previous_scores[temp_im_id-1]
                         prev_center = previous_centers[temp_im_id-1]
                         prev_area = previous_areas[temp_im_id-1]
+                        prev_bbox = bBoxes_results[temp_im_id - 1, :]
 
                     n_history = 20
                     prev_avgScore = get_averageScore_from_history(previous_scores, im_id-1, N=n_history)
@@ -776,10 +841,11 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                     prev_avgDepth = init_target_depth
                     prev_avgArea = init_area
                     prev_area = init_area
+                    prev_bbox = region1
                     prev_avgScore = 1.0
                     reset = False
 
-                image, _, = get_image(image_dir, target_box=None, init=False, p=p)
+                image, _, = get_image(image_dir, target_box=None, init=False, p=p, prev_depth=prev_depth)
             else:
                 image = get_image(image_dir, dtype=p.dtype, depth_threshold=p.depth_threshold)
 
@@ -795,13 +861,13 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
 
                 input_image = get_layered_image_by_depth(image, prev_depth,  p)
 
-                centered_temp_region, centered_score_map, centered_temp_iou, centered_temp_score_max, centered_temp_dis = tracker.tracking(input_image)
+                centered_temp_region, centered_score_map, centered_temp_iou, centered_temp_score_max, centered_temp_dis = tracker.tracking(input_image, manually_update=False, last_gt=prev_bbox)
                 # temp_results = (centered_temp_region, centered_score_map, centered_temp_iou, centered_temp_score_max, centered_temp_dis)
 
                 ''' Compare the predicted depth to the previous history depths ? or the previous depth ????'''
                 temp_area = centered_temp_region[2] * centered_temp_region[3]
 
-                temp_target_depth, finetuned_region = get_target_depth(image, centered_temp_region, p=p)
+                temp_target_depth, finetuned_region = get_target_depth(image, centered_temp_region, p=p, last_depth=prev_depth)
                 temp_center = [int(finetuned_region[0]+finetuned_region[2]/2), int(finetuned_region[1]+finetuned_region[3]/2)]
 
                 ''' using the finetuned region and the targetdepth '''
@@ -829,55 +895,71 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
                 temp_conf_changes_flag = centered_temp_score_max < p.conf_threshold
                 # temp_center_changes_flag = np.linalg.norm(np.asarray(temp_center) - np.asarray(prev_center)) > np.sqrt(temp_area)*1.2
                 # temp_center_changes_flag = np.linalg.norm(np.asarray(temp_center) - np.asarray(prev_center)) > np.sqrt(temp_area)*0.5
-                temp_center_changes_flag = np.linalg.norm(np.asarray(temp_center) - np.asarray(prev_center)) > np.sqrt(prev_area)*0.5
+                temp_center_changes_flag = np.linalg.norm(np.asarray(temp_center) - np.asarray(prev_center)) > np.sqrt(prev_area)*1.5
 
                 if temp_conf_changes_flag or temp_area_changes_flag or temp_depth_changes_flag or temp_center_changes_flag:
 
+                    update = False
+
+                    if not update:
+                        layer_depth = prev_depth
+                        # temp_results, update = search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
+                        temp_results, update = search_layer(tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
+
+                    if not update:
+                        layer_depth = prev_depth
+                        # temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
+                        temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
+
+                        if update:
+                            tracker = init_tracker
+
                     ''' search different layers starting from current depth center '''
 
-                    # search_steps = [-0.5 * p.radius, 0.5 * p.radius,  -1.0 * p.radius, 1.0 * p.radius]
-                    search_steps = [-0.5 * p.radius, 0.5 * p.radius]
+                    search_steps = [-0.5 * p.radius, 0.5 * p.radius,  -1.0 * p.radius, 1.0 * p.radius]
+                    # search_steps = [-0.5 * p.radius, 0.5 * p.radius]
 
-                    update = False
 
                     for step in search_steps:
                         layer_depth = temp_target_depth + step
                         if layer_depth > 0 and layer_depth < 2 * temp_target_depth:
                             ''' use the current tracker '''
                             # temp_results, update = search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                            temp_results, update = search_layer(tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
+                            temp_results, update = search_layer(tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
                             if update:
                                 break
                             ''' use the init tracker '''
                             # temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                            temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
+                            temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
                             if update:
                                 tracker = init_tracker
                                 break
 
-                    if not update:
-                        layer_depth = prev_depth
-                        # temp_results, update = search_layer(tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                        temp_results, update = search_layer(tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
 
                     if not update:
                         ''' search the whole image with current tracker '''
                         # temp_results, update = search_layer(tracker, None, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                        temp_results, update = search_layer(tracker, None, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
+                        temp_results, update = search_layer(tracker, None, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
 
-                    if not update:
-                        layer_depth = prev_depth
-                        # temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                        temp_results, update = search_layer(init_tracker, layer_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
 
-                        if update:
-                            tracker = init_tracker
 
                     if not update:
                         ''' search the whole image with init tracker '''
                         # temp_results, update = search_layer(init_tracker, None, image, p, prev_avgArea, prev_avgDepth, prev_center, init_area, temp_results)
-                        temp_results, update = search_layer(init_tracker, None, image, p, prev_area, prev_depth, prev_center, init_area, temp_results)
+                        temp_results, update = search_layer(init_tracker, None, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
 
+                        if update:
+                            tracker = init_tracker
+                # else:
+                #     print('!!!!!!!!!!!!!!!!!!!! update trackers !!!!!!!!!!!!!!!!')
+                #     tracker.manually_update(input_image)
+
+                if im_id % 50 == 0:
+                    temp_results, update = search_layer(init_tracker, prev_depth, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
+                    if update:
+                        tracker = init_tracker
+                    else:
+                        temp_results, update = search_layer(init_tracker, None, image, p, prev_area, prev_depth, prev_center, init_area, temp_results, last_gt=prev_bbox)
                         if update:
                             tracker = init_tracker
 
@@ -892,37 +974,60 @@ def run_seq_list(Dataset, p, sequence_list, data_dir, tracker_name='dimp', track
 
                 ''' If target moves too far '''
                 if  1.0 * max(target_depth, prev_depth) / (min(target_depth, prev_depth)+1.0)  > p.target_depth_changes_threshold:
-                    score_max = 0.1 * score_max
+                    print('!!!!!!!!!!!!! Target moving too fast !!!!!!!!!!!!!!')
+                    print('Target depth : %f,   prev_depth : %f, ratio %f > %f'%(target_depth, prev_depth, 1.0 * max(target_depth, prev_depth) / (min(target_depth, prev_depth)+1.0), p.target_depth_changes_threshold))
+
+                    # score_max = 0.1 * score_max
+                    score_max = min(p.conf_threshold - 0.01, score_max)
+                    previous_depths[im_id] = previous_depths[im_id-1]
 
                 ''' if the area change too much, discard..., update the score '''
                 # if temp_area < init_area * p.minimun_area_threshold:
                 if temp_area < prev_area * p.minimun_area_threshold:
                     print('!!!!!!!!!!!!! Frame %d : the predicted area is too small  %f vs init_area %f!!!!!!!!!!!!!!!'%(im_id, temp_area, init_area))
-                    score_max = 1.0 * temp_area / prev_area
-                ''' moving too fast '''
+                    # score_max = 1.0 * temp_area / prev_area
+                    score_max = min(p.conf_threshold - 0.01, score_max)
+                    previous_areas[im_id] = previous_areas[im_id-1]
+                    print('temp_area : %f , prev_area, %f , prev_area * ration : %f'%(temp_area, prev_area, prev_area*p.minimun_area_threshold))
+
+                ''' the normal distance between to bbox'''
+                norm_dist = np.linalg.norm(np.asarray(bBoxes_results[im_id-1, :]) - np.asarray(region))
+                print('norm_dist : %f' % norm_dist)
+
+
                 moving_dist = np.linalg.norm(np.asarray(previous_centers[im_id]) - np.asarray(previous_centers[im_id-1]))
-                dist_threshold = np.sqrt(temp_area) * 0.5
+                dist_threshold = np.sqrt(prev_area)*1.5
                 if moving_dist >  dist_threshold:
-                    print('estimated depth too far away')
-                    score_max = score_max * 0.1
+                    print('!!!!!!!!!!!!!! estimated depth too far away!!!!!!!!!!!!!!!!!')
+                    # score_max = score_max * 0.1
+                    score_max = min(p.conf_threshold - 0.01, score_max)
+                    previous_centers[im_id] = previous_centers[im_id-1]
+
+                    print('previous_center[im_id-1] = ', previous_centers[im_id-1],
+                          '  previous_center[in_id] = , ', previous_centers[im_id],
+                          ' moving_dist: %f > %s '%(moving_dist, dist_threshold))
+
 
                 print("%d: " % seq_id + video
                       + ": %d /" % im_id + "%d" % len(image_list)
-                      + ' estimated target_depth : %f'%target_depth
+                      + ' estimated target_depth / prev_depth : %f / %f'%(target_depth, prev_depth)
                       + ' estimated score: %f'%score_max
-                      + ' estiamted area: %f'%temp_area
-                      + ' moving_dist : %s'%moving_dist
-                      # + ' avg_previous_area : %s'%prev_avgArea
-                      # + ' avg_previous_depth : %s'%prev_avgDepth
-                      # + ' avg_previous_score : %s'%prev_avgScore
-                      # + ' dist_threshold : %s'%dist_threshold
-                      # + ' init_area: %f'%init_area
-                      # + ' init_depth : %f'%init_target_depth
+                      + ' estiamted area: %f / %f'%(temp_area, prev_area)
+                      + ' moving_dist / dist_threshold : %f / %f'%(moving_dist, dist_threshold)
                       )
             else:
                 region, score_map, iou, score_max, dis = tracker.tracking(image)
                 print("%d: " % seq_id + video + ": %d /" % im_id + "%d" % len(image_list) + "score: %f"%score_max)
 
+            if score_max < 0.2:
+                tracker = tracker_copy
+
+            if score_max > 0.95:
+                tracker_copy = tracker
+
+            if score_max > 0.8:
+                print('!!!!!!!!!!!!!!!!!!!! update trackers !!!!!!!!!!!!!!!!')
+                tracker.manually_update(input_image)
 
             t = time.time() - tic
             print('total time: ', t)
