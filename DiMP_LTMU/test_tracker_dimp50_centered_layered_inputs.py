@@ -25,8 +25,8 @@ p.rollback_iter = 50
 
 p.radius = 500
 
-p.visualization = True
-p.grabcut_visualization = True
+p.visualization = False
+p.grabcut_visualization = False
 p.grabcut_extra = 50
 p.grabcut_rz_factor = 1.5       # 1 / 1.5
 p.grabcut_rz_threshold = 300
