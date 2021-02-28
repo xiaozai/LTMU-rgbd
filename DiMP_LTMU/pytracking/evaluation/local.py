@@ -18,4 +18,3 @@ def local_env_settings():
     settings.vot_path = ''
 
     return settings
-

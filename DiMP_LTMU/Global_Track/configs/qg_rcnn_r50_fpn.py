@@ -136,7 +136,10 @@ cudnn_benchmark = True
 dist_params = dict(backend='nccl')
 log_level = 'INFO'
 work_dir = 'work_dirs/qg_rcnn_r50_fpn'
-# load_from = 'checkpoints/qg_rcnn_r50_fpn_2x_20181010-443129e1.pth'
-load_from = '/home/yan/Data2/LTMU-rgbd-models/qg_rcnn_r50_fpn_2x_20181010-443129e1.pth'
+load_from = 'checkpoints/qg_rcnn_r50_fpn_2x_20181010-443129e1.pth'
+# from run_tracker import p_config
+# p = p_config()
+# load_from = p.qg_rcnn_r50_fpn_path
+
 resume_from = None
 workflow = [('train', 1)]

@@ -25,6 +25,7 @@ class p_config(object):
     save_training_data = False
     visualization = True
 
+    # qg_rcnn_r50_fpn_path = '/home/yan/Data2/LTMU-rgbd-models/qg_rcnn_r50_fpn_2x_20181010-443129e1.pth'
 
 class VOTLT_Results_Saver(object):
     def __init__(self, save_path, video, t):
