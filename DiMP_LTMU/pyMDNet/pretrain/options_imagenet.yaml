@@ -6,6 +6,7 @@ data_path: "pretrain/data/imagenet_vid.pkl"
 # model path
 init_model_path: "models/imagenet-vgg-m.mat"
 model_path: "models/mdnet_imagenet_vid.pth"
+# model_path: "/home/yan/Data2/LTMU-rgbd-models/mdnet_imagenet_vid.pth"
 
 # input size
 img_size: 107
